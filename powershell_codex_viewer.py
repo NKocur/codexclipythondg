@@ -5,6 +5,7 @@ import os
 import shlex
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
@@ -16,6 +17,57 @@ import dragongui as dg
 
 MAX_LOG_LINES = 600
 MAX_RAW_LINES = 300
+
+
+if sys.platform == "win32":
+    import ctypes
+    from ctypes import wintypes
+
+    class _JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+        _fields_ = [
+            ("PerProcessUserTimeLimit", ctypes.c_longlong),
+            ("PerJobUserTimeLimit", ctypes.c_longlong),
+            ("LimitFlags", wintypes.DWORD),
+            ("MinimumWorkingSetSize", ctypes.c_size_t),
+            ("MaximumWorkingSetSize", ctypes.c_size_t),
+            ("ActiveProcessLimit", wintypes.DWORD),
+            ("Affinity", ctypes.c_size_t),
+            ("PriorityClass", wintypes.DWORD),
+            ("SchedulingClass", wintypes.DWORD),
+        ]
+
+    class _IO_COUNTERS(ctypes.Structure):
+        _fields_ = [
+            ("ReadOperationCount", ctypes.c_ulonglong),
+            ("WriteOperationCount", ctypes.c_ulonglong),
+            ("OtherOperationCount", ctypes.c_ulonglong),
+            ("ReadTransferCount", ctypes.c_ulonglong),
+            ("WriteTransferCount", ctypes.c_ulonglong),
+            ("OtherTransferCount", ctypes.c_ulonglong),
+        ]
+
+    class _JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+        _fields_ = [
+            ("BasicLimitInformation", _JOBOBJECT_BASIC_LIMIT_INFORMATION),
+            ("IoInfo", _IO_COUNTERS),
+            ("ProcessMemoryLimit", ctypes.c_size_t),
+            ("JobMemoryLimit", ctypes.c_size_t),
+            ("PeakProcessMemoryUsed", ctypes.c_size_t),
+            ("PeakJobMemoryUsed", ctypes.c_size_t),
+        ]
+
+    _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    _kernel32.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
+    _kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+    _kernel32.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD]
+    _kernel32.SetInformationJobObject.restype = wintypes.BOOL
+    _kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+    _kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
+    _kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    _kernel32.CloseHandle.restype = wintypes.BOOL
+
+    _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
+    _JobObjectExtendedLimitInformation = 9
 
 
 def resolve_codex_command() -> str:
@@ -40,6 +92,7 @@ class CodexRunState:
     prompt: str = ""
     codex_cmd: str = field(default_factory=resolve_codex_command)
     cwd: str = field(default_factory=lambda: str(Path.cwd()))
+    resume_session_id: str = ""
     model: str = ""
     sandbox: str = "workspace-write"
     extra_args: str = ""
@@ -67,6 +120,7 @@ class CodexExecRunner:
         self.on_log = on_log
         self.on_done = on_done
         self.process: subprocess.Popen[str] | None = None
+        self._job_handle: int | None = None
         self._stop_requested = threading.Event()
 
     def start(self) -> None:
@@ -99,6 +153,7 @@ class CodexExecRunner:
                 errors="replace",
                 bufsize=1,
             )
+            self._attach_process_lifetime_job()
 
             assert self.process.stderr is not None
             stderr_thread = threading.Thread(
@@ -147,6 +202,7 @@ class CodexExecRunner:
         except Exception as exc:
             stderr_lines.append(str(exc))
         finally:
+            self._close_job_handle()
             self.on_done(returncode, "".join(stderr_lines))
 
     @staticmethod
@@ -156,23 +212,33 @@ class CodexExecRunner:
 
     def _build_command(self) -> list[str]:
         codex_cmd = self.state.codex_cmd.strip() or resolve_codex_command()
-        cmd = [
-            codex_cmd,
-            "exec",
-            "--json",
-            "--color",
-            "never",
-        ]
+        resume_session_id = self.state.resume_session_id.strip()
+        if resume_session_id:
+            cmd = [
+                codex_cmd,
+                "exec",
+                "resume",
+                "--json",
+            ]
+        else:
+            cmd = [
+                codex_cmd,
+                "exec",
+                "--json",
+                "--color",
+                "never",
+            ]
 
         if self.state.bypass_approvals_and_sandbox:
             cmd.append("--dangerously-bypass-approvals-and-sandbox")
-        else:
+        elif not resume_session_id:
             cmd.extend(["--sandbox", self.state.sandbox])
 
-        cmd.extend([
-            "--cd",
-            self.state.cwd.strip() or str(Path.cwd()),
-        ])
+        if not resume_session_id:
+            cmd.extend([
+                "--cd",
+                self.state.cwd.strip() or str(Path.cwd()),
+            ])
 
         if self.state.skip_git_check:
             cmd.append("--skip-git-repo-check")
@@ -183,8 +249,41 @@ class CodexExecRunner:
         if self.state.extra_args.strip():
             cmd.extend(shlex.split(self.state.extra_args))
 
+        if resume_session_id:
+            cmd.append(resume_session_id)
         cmd.append("-")
         return cmd
+
+    def _attach_process_lifetime_job(self) -> None:
+        if sys.platform != "win32" or self.process is None:
+            return
+
+        job = _kernel32.CreateJobObjectW(None, None)
+        if not job:
+            return
+
+        info = _JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+        info.BasicLimitInformation.LimitFlags = _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        ok = _kernel32.SetInformationJobObject(
+            job,
+            _JobObjectExtendedLimitInformation,
+            ctypes.byref(info),
+            ctypes.sizeof(info),
+        )
+        if not ok:
+            _kernel32.CloseHandle(job)
+            return
+
+        if not _kernel32.AssignProcessToJobObject(job, self.process._handle):
+            _kernel32.CloseHandle(job)
+            return
+
+        self._job_handle = job
+
+    def _close_job_handle(self) -> None:
+        if sys.platform == "win32" and self._job_handle:
+            _kernel32.CloseHandle(self._job_handle)
+            self._job_handle = None
 
 
 class CodexExecGui:
