@@ -71,7 +71,7 @@ if sys.platform == "win32":
 
 
 def resolve_codex_command() -> str:
-    for name in ("codex", "codex.cmd", "codex.exe"):
+    for name in ("codex.cmd", "codex.exe", "codex"):
         resolved = shutil.which(name)
         if resolved:
             return resolved

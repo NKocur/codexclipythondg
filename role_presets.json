@@ -1,0 +1,104 @@
+{
+  "roles": {
+    "Planner": {
+      "artifact_name": "PLAN.md",
+      "prompt": "Create artifacts/PLAN.md from the user's goal. First inspect the local workspace, then do current research when the task depends on modern tools, libraries, APIs, design patterns, or other fast-moving technology. Use authoritative sources where possible, identify what current advanced approaches exist, and fold the findings into the plan. Include concrete steps, role handoffs, risks, source notes, and stop conditions."
+    },
+    "Reviewer": {
+      "artifact_name": "REVIEW.md",
+      "prompt": "Read artifacts/PLAN.md. Write artifacts/REVIEW.md with findings, gaps, risks, and approval status."
+    },
+    "Implementer": {
+      "artifact_name": "IMPLEMENTATION_NOTES.md",
+      "prompt": "Read artifacts/PLAN.md and artifacts/REVIEW.md. Make the smallest code changes needed. Write artifacts/IMPLEMENTATION_NOTES.md with what changed and what remains."
+    },
+    "Tester": {
+      "artifact_name": "TEST_RESULTS.md",
+      "prompt": "Run appropriate verification. Write artifacts/TEST_RESULTS.md with commands, results, failures, and next steps."
+    },
+    "Archivist": {
+      "artifact_name": "SUMMARY.md",
+      "prompt": "Read the workflow artifacts and write artifacts/SUMMARY.md with the final outcome and important decisions."
+    },
+    "Summarizer": {
+      "artifact_name": "SUMMARY_OF_PAPER.md",
+      "prompt": "Read the target paper (path or URL given in the goal). Write artifacts/SUMMARY_OF_PAPER.md summarizing the claimed contributions, methodology, datasets/experiments, and headline results."
+    },
+    "Critic": {
+      "artifact_name": "CRITIQUE.md",
+      "prompt": "Read artifacts/SUMMARY_OF_PAPER.md and the paper itself. Write artifacts/CRITIQUE.md identifying methodological weaknesses, unsupported claims, missing baselines/comparisons, and threats to validity."
+    },
+    "Reproducibility Checker": {
+      "artifact_name": "REPRODUCIBILITY.md",
+      "prompt": "Read artifacts/SUMMARY_OF_PAPER.md and artifacts/CRITIQUE.md. Write artifacts/REPRODUCIBILITY.md assessing whether the experiments and any released code/data are reproducible, and what's missing."
+    },
+    "Synthesizer": {
+      "artifact_name": "REVIEW_REPORT.md",
+      "prompt": "Read all prior artifacts. Write artifacts/REVIEW_REPORT.md with a final review: strengths, weaknesses, and a recommendation (accept / minor revision / major revision / reject) with rationale."
+    },
+    "Scoper": {
+      "artifact_name": "RESEARCH_SCOPE.md",
+      "prompt": "From the user's goal, write artifacts/RESEARCH_SCOPE.md defining the research question, background/context, what's already known, and what would count as a satisfying answer."
+    },
+    "Investigator": {
+      "artifact_name": "FINDINGS.md",
+      "prompt": "Read artifacts/RESEARCH_SCOPE.md. Gather information (search, read docs/sources, run experiments as needed) and write artifacts/FINDINGS.md documenting what you found, with sources."
+    },
+    "Analyst": {
+      "artifact_name": "ANALYSIS.md",
+      "prompt": "Read artifacts/RESEARCH_SCOPE.md and artifacts/FINDINGS.md. Write artifacts/ANALYSIS.md analyzing the findings: patterns, disagreements between sources, gaps, and implications."
+    },
+    "Reporter": {
+      "artifact_name": "RESEARCH_REPORT.md",
+      "prompt": "Read all prior artifacts. Write artifacts/RESEARCH_REPORT.md with a final, well-cited report answering the research question, plus open questions and suggested next steps."
+    },
+    "Spec Writer": {
+      "artifact_name": "SPEC.md",
+      "prompt": "From the user's goal, inspect the local workspace and write artifacts/SPEC.md describing the concrete change: scope, affected files/modules, edge cases, and out-of-scope items."
+    },
+    "Code Implementer": {
+      "artifact_name": "IMPLEMENTATION_NOTES.md",
+      "prompt": "Read artifacts/SPEC.md. Make the smallest code changes needed to satisfy it. Write artifacts/IMPLEMENTATION_NOTES.md with what changed and what remains."
+    },
+    "Test Writer": {
+      "artifact_name": "TEST_RESULTS.md",
+      "prompt": "Read artifacts/SPEC.md and artifacts/IMPLEMENTATION_NOTES.md. Run or write appropriate tests. Write artifacts/TEST_RESULTS.md with commands, results, failures, and next steps."
+    },
+    "Code Reviewer": {
+      "artifact_name": "CODE_REVIEW.md",
+      "prompt": "Read all prior artifacts and the actual diff. Write artifacts/CODE_REVIEW.md with findings, risks, and an approval status."
+    },
+    "Maintainability Reviewer": {
+      "artifact_name": "MAINTAINABILITY_REVIEW.md",
+      "prompt": "Read artifacts/IMPLEMENTATION_NOTES.md and inspect the actual diff/repo (not just the other agents' summaries). Audit the change for the architectural failure patterns that make LLM-generated code hard to maintain, even when it passes tests. For each pattern, actively look for it in the real files touched; do not just restate the Implementer's own description.\n\nFailure patterns to check:\n1. Duplication instead of reuse - reimplemented validation, formatting, parsing, API wrappers, or components that already exist elsewhere in the repo.\n2. God files / multi-responsibility functions - large files or functions mixing validation, persistence, logging, formatting, and UI/state in one place; growing conditional branches per feature.\n3. Modular mirage - code that looks modular (services/managers/adapters/providers) but isn't: layers that import backward, interfaces with only one implementation, pass-through services, manager classes that do everything.\n4. Code in the wrong layer - business rules in UI, DB calls in route handlers instead of repositories/services, domain objects doing formatting, dependency direction violations.\n5. Shallow or cargo-culted abstractions - new classes/wrappers (e.g. XManager, DataProcessor, ConfigHandler) that don't isolate change, hide complexity, reduce coupling, or clarify ownership.\n6. Happy-path logic and swallowed errors - bare except/catch blocks, exceptions logged and discarded, error handling that masks the actual failure cause.\n7. Version/dependency confusion - unnecessary new dependencies, deprecated APIs, mixed library-version patterns, assumptions that don't match the repo's actual lockfile/manifest/framework version.\n8. Weak tests - tests that only cover the happy path, assert implementation details or exact internal call order, or would pass against almost any implementation rather than the intended behavior/contract.\n\nAlso answer the reuse-audit questions directly: Did it reuse the existing domain model? Did it duplicate validation/formatting/parsing/API access? Is the code in the right layer? Does each new abstraction earn its existence? Was dependency direction preserved? Did it delete obsolete code, or only add more? Could a future developer understand why this change exists without asking the AI?\n\nWrite artifacts/MAINTAINABILITY_REVIEW.md with: a findings list (pattern, file/location, description, severity: blocking/major/minor, concrete recommended fix), direct answers to the reuse-audit questions above, and an overall maintainability verdict (clean / needs follow-up refactor / blocking) with a short rationale. If you find nothing significant, say so explicitly rather than leaving the report empty."
+    }
+  },
+  "presets": {
+    "Default Pipeline": [
+      "Planner",
+      "Reviewer",
+      "Implementer",
+      "Tester",
+      "Archivist"
+    ],
+    "Paper Review": [
+      "Summarizer",
+      "Critic",
+      "Reproducibility Checker",
+      "Synthesizer"
+    ],
+    "Research": [
+      "Scoper",
+      "Investigator",
+      "Analyst",
+      "Reporter"
+    ],
+    "Code Implementation": [
+      "Spec Writer",
+      "Code Implementer",
+      "Test Writer",
+      "Maintainability Reviewer",
+      "Code Reviewer"
+    ]
+  }
+}
