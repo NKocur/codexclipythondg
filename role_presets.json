@@ -71,6 +71,18 @@
     "Maintainability Reviewer": {
       "artifact_name": "MAINTAINABILITY_REVIEW.md",
       "prompt": "Read artifacts/IMPLEMENTATION_NOTES.md and inspect the actual diff/repo (not just the other agents' summaries). Audit the change for the architectural failure patterns that make LLM-generated code hard to maintain, even when it passes tests. For each pattern, actively look for it in the real files touched; do not just restate the Implementer's own description.\n\nFailure patterns to check:\n1. Duplication instead of reuse - reimplemented validation, formatting, parsing, API wrappers, or components that already exist elsewhere in the repo.\n2. God files / multi-responsibility functions - large files or functions mixing validation, persistence, logging, formatting, and UI/state in one place; growing conditional branches per feature.\n3. Modular mirage - code that looks modular (services/managers/adapters/providers) but isn't: layers that import backward, interfaces with only one implementation, pass-through services, manager classes that do everything.\n4. Code in the wrong layer - business rules in UI, DB calls in route handlers instead of repositories/services, domain objects doing formatting, dependency direction violations.\n5. Shallow or cargo-culted abstractions - new classes/wrappers (e.g. XManager, DataProcessor, ConfigHandler) that don't isolate change, hide complexity, reduce coupling, or clarify ownership.\n6. Happy-path logic and swallowed errors - bare except/catch blocks, exceptions logged and discarded, error handling that masks the actual failure cause.\n7. Version/dependency confusion - unnecessary new dependencies, deprecated APIs, mixed library-version patterns, assumptions that don't match the repo's actual lockfile/manifest/framework version.\n8. Weak tests - tests that only cover the happy path, assert implementation details or exact internal call order, or would pass against almost any implementation rather than the intended behavior/contract.\n\nAlso answer the reuse-audit questions directly: Did it reuse the existing domain model? Did it duplicate validation/formatting/parsing/API access? Is the code in the right layer? Does each new abstraction earn its existence? Was dependency direction preserved? Did it delete obsolete code, or only add more? Could a future developer understand why this change exists without asking the AI?\n\nWrite artifacts/MAINTAINABILITY_REVIEW.md with: a findings list (pattern, file/location, description, severity: blocking/major/minor, concrete recommended fix), direct answers to the reuse-audit questions above, and an overall maintainability verdict (clean / needs follow-up refactor / blocking) with a short rationale. If you find nothing significant, say so explicitly rather than leaving the report empty."
+    },
+    "Audit Scoper": {
+      "artifact_name": "AUDIT_SCOPE.md",
+      "prompt": "Read the user's audit request and inspect the workspace enough to identify the relevant files, modules, tests, and recent changes to review. Do not modify files, do not apply patches, and do not run formatters or generators. Write artifacts/AUDIT_SCOPE.md with: the audit objective, in-scope files/areas, out-of-scope areas, commands or read-only inspections performed, assumptions, and specific questions the remaining audit should answer."
+    },
+    "Code Auditor": {
+      "artifact_name": "CODE_AUDIT_FINDINGS.md",
+      "prompt": "Read artifacts/AUDIT_SCOPE.md and audit the requested code or change. This is a read-only audit: do not modify files, do not apply patches, do not run commands that write to the repo, and do not create fixes. You may run read-only inspection commands and tests only if they are safe and useful; record any command that could not be run. Focus on correctness bugs, regressions, edge cases, concurrency/state issues, error handling, security/privacy risks, maintainability problems, dependency/version issues, and missing or weak tests. Write artifacts/CODE_AUDIT_FINDINGS.md with findings ordered by severity. For each finding include: severity (blocking/major/minor), file/location, evidence, why it matters, and the recommended fix. If no issues are found, say that explicitly and list residual risks."
+    },
+    "Audit Reporter": {
+      "artifact_name": "CODE_AUDIT_REPORT.md",
+      "prompt": "Read artifacts/AUDIT_SCOPE.md and artifacts/CODE_AUDIT_FINDINGS.md, then write the final read-only audit report. Do not modify files or create fixes. Write artifacts/CODE_AUDIT_REPORT.md with: executive summary, audit scope, findings grouped by severity, recommended fix order, test gaps, residual risks, and a final verdict (clean / needs follow-up / high risk). Keep it grounded in concrete files and evidence from the audit."
     }
   },
   "presets": {
@@ -99,6 +111,11 @@
       "Test Writer",
       "Maintainability Reviewer",
       "Code Reviewer"
+    ],
+    "Code Audit Only": [
+      "Audit Scoper",
+      "Code Auditor",
+      "Audit Reporter"
     ]
   }
 }

@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+
+build/
+dist/
+
+saved_sessions.json
+.codex-workbench-sessions/
+artifacts/
+
+debug examples/

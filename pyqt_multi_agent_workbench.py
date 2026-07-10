@@ -17,6 +17,7 @@ _resolve_codex_command: Callable[[], str] | None = None
 
 MAX_LOG_LINES = 600
 MAX_RAW_LINES = 300
+MAX_INLINE_ACTIVITY_OUTPUT_CHARS = 6000
 HANDOFF_MIN_LENGTH = 20
 HANDOFF_MAX_LENGTH = 6000
 HANDOFF_END = "[[END_HANDOFF]]"
@@ -149,6 +150,12 @@ class WorkflowState:
     current_role_index: int = 0
 
 
+SESSION_FILE_FILTER = "Codex Workbench Session (*.codex-workbench.json);;JSON Files (*.json);;All Files (*)"
+SESSION_FILE_SUFFIX = ".codex-workbench.json"
+SESSION_INDEX_FILE_NAME = "saved_sessions.json"
+SESSION_DIR_NAME = ".codex-workbench-sessions"
+
+
 ROLE_PROMPTS = [
     AgentRole(
         "Planner",
@@ -193,7 +200,18 @@ ARTIFACT_SPECS = [
     ArtifactSpec("SUMMARY.md", "SUMMARY.md"),
 ]
 
-LIBRARY_FILE = Path(__file__).resolve().parent / "role_presets.json"
+def app_dir() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
+def bundle_dir() -> Path:
+    return Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent)).resolve()
+
+
+LIBRARY_FILE = app_dir() / "role_presets.json"
+BUNDLED_LIBRARY_FILE = bundle_dir() / "role_presets.json"
 
 # Roles are saved independently, keyed by name. Presets are just named
 # orderings of role names that reference this shared library.
@@ -370,9 +388,10 @@ def _migrate_legacy_library(data: dict[str, Any]) -> tuple[dict[str, dict[str, s
 
 def load_library() -> tuple[dict[str, dict[str, str]], dict[str, list[str]]]:
     data: dict[str, Any] = {}
-    if LIBRARY_FILE.exists():
+    source_file = LIBRARY_FILE if LIBRARY_FILE.exists() else BUNDLED_LIBRARY_FILE
+    if source_file.exists():
         try:
-            loaded = json.loads(LIBRARY_FILE.read_text(encoding="utf-8"))
+            loaded = json.loads(source_file.read_text(encoding="utf-8"))
             if isinstance(loaded, dict):
                 data = loaded
         except (OSError, json.JSONDecodeError):
@@ -400,6 +419,164 @@ def save_library(roles: dict[str, dict[str, str]], presets: dict[str, list[str]]
     LIBRARY_FILE.write_text(
         json.dumps({"roles": roles, "presets": presets}, indent=2, ensure_ascii=False), encoding="utf-8"
     )
+
+
+def role_to_dict(role: AgentRole) -> dict[str, str]:
+    return {
+        "name": role.name,
+        "artifact_name": role.artifact_name,
+        "prompt": role.prompt,
+        "status": role.status,
+        "session_id": role.session_id,
+    }
+
+
+def role_from_dict(data: dict[str, Any]) -> AgentRole | None:
+    name = str(data.get("name") or "").strip()
+    if not name:
+        return None
+    return AgentRole(
+        name=name,
+        artifact_name=str(data.get("artifact_name") or f"{name}.md"),
+        prompt=str(data.get("prompt") or ""),
+        status=str(data.get("status") or "queued"),
+        session_id=str(data.get("session_id") or ""),
+    )
+
+
+def workflow_state_to_dict(state: WorkflowState) -> dict[str, Any]:
+    return {
+        "goal": state.goal,
+        "codex_cmd": state.codex_cmd,
+        "cwd": state.cwd,
+        "model": state.model,
+        "sandbox": state.sandbox,
+        "extra_args": state.extra_args,
+        "bypass_approvals_and_sandbox": state.bypass_approvals_and_sandbox,
+        "skip_git_check": state.skip_git_check,
+        "ephemeral": state.ephemeral,
+        "auto_advance": state.auto_advance,
+        "current_role_index": state.current_role_index,
+    }
+
+
+def workflow_state_from_dict(data: dict[str, Any]) -> WorkflowState:
+    state = WorkflowState()
+    state.goal = str(data.get("goal") or state.goal)
+    state.codex_cmd = str(data.get("codex_cmd") or state.codex_cmd)
+    state.cwd = str(data.get("cwd") or state.cwd)
+    state.model = str(data.get("model") or "")
+    state.sandbox = str(data.get("sandbox") or state.sandbox)
+    state.extra_args = str(data.get("extra_args") or "")
+    state.bypass_approvals_and_sandbox = bool(
+        data.get("bypass_approvals_and_sandbox", state.bypass_approvals_and_sandbox)
+    )
+    state.skip_git_check = bool(data.get("skip_git_check", state.skip_git_check))
+    state.ephemeral = bool(data.get("ephemeral", state.ephemeral))
+    state.auto_advance = bool(data.get("auto_advance", state.auto_advance))
+    try:
+        state.current_role_index = int(data.get("current_role_index", 0))
+    except (TypeError, ValueError):
+        state.current_role_index = 0
+    return state
+
+
+def handoff_to_dict(handoff: Handoff | None) -> dict[str, str] | None:
+    if handoff is None:
+        return None
+    return {
+        "source_role": handoff.source_role,
+        "target_role": handoff.target_role,
+        "marker": handoff.marker,
+        "body": handoff.body,
+    }
+
+
+def handoff_from_dict(data: Any) -> Handoff | None:
+    if not isinstance(data, dict):
+        return None
+    source_role = str(data.get("source_role") or "")
+    target_role = str(data.get("target_role") or "")
+    body = str(data.get("body") or "")
+    if not source_role or not target_role or not body:
+        return None
+    marker = str(data.get("marker") or handoff_marker(target_role))
+    return Handoff(source_role, target_role, marker, body)
+
+
+def workspace_path(cwd: str) -> Path:
+    return Path(cwd.strip() or str(app_dir())).expanduser()
+
+
+def session_dir_for_workspace(workspace: Path) -> Path:
+    return workspace / SESSION_DIR_NAME
+
+
+def session_index_file(workspace: Path) -> Path:
+    return session_dir_for_workspace(workspace) / SESSION_INDEX_FILE_NAME
+
+
+def path_key(path: Path) -> str:
+    return str(path).lower()
+
+
+def path_for_session_index(workspace: Path, path: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(workspace.resolve()))
+    except (OSError, ValueError):
+        return str(path)
+
+
+def load_session_index(workspace: Path) -> list[Path]:
+    try:
+        loaded = json.loads(session_index_file(workspace).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        loaded = {}
+    if isinstance(loaded, dict):
+        paths = loaded.get("sessions")
+    else:
+        paths = loaded
+    if not isinstance(paths, list):
+        paths = []
+
+    seen: set[str] = set()
+    result: list[Path] = []
+    for item in paths:
+        path_text = str(item or "").strip()
+        if not path_text:
+            continue
+        path = Path(path_text).expanduser()
+        if not path.is_absolute():
+            path = workspace / path
+        key = path_key(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(path)
+    session_dir = session_dir_for_workspace(workspace)
+    try:
+        discovered = sorted(session_dir.glob(f"*{SESSION_FILE_SUFFIX}"), key=lambda item: item.stat().st_mtime, reverse=True)
+    except OSError:
+        discovered = []
+    for path in discovered:
+        key = path_key(path)
+        if key not in seen:
+            seen.add(key)
+            result.append(path)
+    return result
+
+
+def save_session_index(workspace: Path, paths: list[Path]) -> None:
+    index_file = session_index_file(workspace)
+    index_file.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"sessions": [path_for_session_index(workspace, path) for path in paths]}
+    index_file.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def session_slug(text: str) -> str:
+    slug = "".join(ch.lower() if ch.isalnum() else "-" for ch in text.strip())
+    slug = "-".join(part for part in slug.split("-") if part)
+    return slug[:48] or "session"
 
 
 MONO_FONT_FAMILY = "Consolas"
@@ -515,6 +692,7 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
         self.runner: Any = None
         self.active_role: AgentRole | None = None
         self.run_started_at = 0.0
+        self.session_file: Path | None = None
 
         self.conversation_lines: list[str] = []
         self.activity_lines: list[str] = []
@@ -532,6 +710,8 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
         self.role_library, self.presets = load_library()
         self._role_button_widgets: list[QtWidgets.QPushButton] = []
         self._preset_dropdowns: list[QtWidgets.QComboBox] = []
+        self.saved_session_paths: list[Path] = []
+        self.session_list: QtWidgets.QListWidget | None = None
 
         self.signals = WorkbenchSignals()
         self.signals.event_ready.connect(self.handle_event)
@@ -543,6 +723,7 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
         self.setStyleSheet(STYLESHEET)
 
         self._build_ui()
+        self.refresh_session_list()
         self._refresh_role_list()
         self.refresh_all_outputs()
 
@@ -569,6 +750,7 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
         root.setContentsMargins(8, 8, 8, 8)
         root.setSpacing(8)
 
+        root.addWidget(self._build_sessions_panel(), 0)
         root.addWidget(self._build_sidebar(), 0)
         root.addWidget(self._build_main_column(), 1)
         return run_tab
@@ -586,6 +768,14 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
         workflow_menu = menubar.addMenu("Workflow")
         new_workflow_action = workflow_menu.addAction("New Workflow")
         new_workflow_action.triggered.connect(self.new_workflow)
+        workflow_menu.addSeparator()
+        save_session_action = workflow_menu.addAction("Save Session")
+        save_session_action.triggered.connect(self.save_session)
+        save_session_as_action = workflow_menu.addAction("Save Session As...")
+        save_session_as_action.triggered.connect(self.save_session_as)
+        load_session_action = workflow_menu.addAction("Load Session...")
+        load_session_action.triggered.connect(self.load_session)
+        workflow_menu.addSeparator()
         workflow_menu.addAction("Open Artifacts Folder")
         workflow_menu.addAction("Export Transcript")
 
@@ -631,6 +821,28 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
 
         layout.addStretch(1)
         return sidebar
+
+    def _build_sessions_panel(self) -> QtWidgets.QWidget:
+        panel = QtWidgets.QWidget()
+        panel.setFixedWidth(135)
+        layout = QtWidgets.QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        label = QtWidgets.QLabel("Sessions")
+        label.setObjectName("section")
+        layout.addWidget(label)
+
+        self.session_list = QtWidgets.QListWidget()
+        self.session_list.itemClicked.connect(self.on_session_item_clicked)
+        layout.addWidget(self.session_list, 1)
+
+        btn_row = QtWidgets.QHBoxLayout()
+        delete_btn = QtWidgets.QPushButton("Delete")
+        delete_btn.clicked.connect(self.delete_selected_session)
+        btn_row.addWidget(delete_btn)
+        layout.addLayout(btn_row)
+
+        return panel
 
     def _build_presets_box(self) -> QtWidgets.QWidget:
         """Builds a Presets picker. Called once per tab that needs one (Run
@@ -1005,7 +1217,311 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
         return self.roles[self.state.current_role_index]
 
     def artifacts_dir(self) -> Path:
-        return Path(self.state.cwd.strip() or Path.cwd()) / "artifacts"
+        return self.current_workspace() / "artifacts"
+
+    def current_workspace(self) -> Path:
+        return workspace_path(self.state.cwd)
+
+    def default_session_path(self) -> Path:
+        return session_dir_for_workspace(self.current_workspace()) / f"workbench-session{SESSION_FILE_SUFFIX}"
+
+    def automatic_session_path(self) -> Path:
+        session_dir = session_dir_for_workspace(self.current_workspace())
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        stem = f"{timestamp}-{session_slug(self.state.goal)}"
+        path = session_dir / f"{stem}{SESSION_FILE_SUFFIX}"
+        suffix = 2
+        while path.exists():
+            path = session_dir / f"{stem}-{suffix}{SESSION_FILE_SUFFIX}"
+            suffix += 1
+        return path
+
+    def ensure_session_file(self) -> None:
+        if self.session_file is None:
+            self.write_session_file(self.automatic_session_path(), announce=False)
+
+    def register_session_path(self, path: Path) -> None:
+        try:
+            normalized = path.resolve()
+        except OSError:
+            normalized = path
+        existing = [item for item in self.saved_session_paths if str(item).lower() != str(normalized).lower()]
+        self.saved_session_paths = [normalized, *existing]
+        try:
+            save_session_index(self.current_workspace(), self.saved_session_paths)
+        except OSError as exc:
+            self.append_event(f"Could not update session index: {exc}", "warning")
+        self.refresh_session_list()
+
+    def refresh_session_list(self) -> None:
+        indexed_paths = load_session_index(self.current_workspace())
+        if self.saved_session_paths:
+            indexed_keys = {path_key(path) for path in indexed_paths}
+            indexed_paths.extend(path for path in self.saved_session_paths if path_key(path) not in indexed_keys)
+        existing_paths: list[Path] = []
+        for path in indexed_paths:
+            if path.exists():
+                existing_paths.append(path)
+        self.saved_session_paths = existing_paths
+
+        if self.session_list is None:
+            return
+        self.session_list.blockSignals(True)
+        self.session_list.clear()
+        for path in self.saved_session_paths:
+            item = QtWidgets.QListWidgetItem(self.session_label(path))
+            item.setData(QtCore.Qt.ItemDataRole.UserRole, str(path))
+            item.setToolTip(str(path))
+            if self.session_file and str(path).lower() == str(self.session_file).lower():
+                font = item.font()
+                font.setBold(True)
+                item.setFont(font)
+            self.session_list.addItem(item)
+        if not self.saved_session_paths:
+            item = QtWidgets.QListWidgetItem("No saved sessions")
+            item.setFlags(item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEnabled)
+            self.session_list.addItem(item)
+        self.session_list.blockSignals(False)
+
+    def session_label(self, path: Path) -> str:
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return path.stem
+        if not isinstance(loaded, dict):
+            return path.stem
+        state = loaded.get("state") if isinstance(loaded.get("state"), dict) else {}
+        goal = str(state.get("goal") or "").strip().splitlines()
+        title = goal[0][:24] if goal else path.stem[:24]
+        role_count = len(loaded.get("roles")) if isinstance(loaded.get("roles"), list) else 0
+        return f"{title}\n{role_count} roles"
+
+    def on_session_item_clicked(self, item: QtWidgets.QListWidgetItem) -> None:
+        path_text = item.data(QtCore.Qt.ItemDataRole.UserRole)
+        if not path_text:
+            return
+        self.load_session_file(Path(str(path_text)))
+
+    def delete_selected_session(self) -> None:
+        if self.session_list is None:
+            return
+        item = self.session_list.currentItem()
+        if item is None:
+            self.set_status("Select a session to delete.")
+            return
+        path_text = item.data(QtCore.Qt.ItemDataRole.UserRole)
+        if not path_text:
+            self.set_status("Select a saved session to delete.")
+            return
+        path = Path(str(path_text))
+        confirm = QtWidgets.QMessageBox.question(
+            self,
+            "Delete Session",
+            f"Delete this saved session?\n{path}",
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+        )
+        if confirm != QtWidgets.QMessageBox.StandardButton.Yes:
+            return
+        try:
+            if path.exists():
+                path.unlink()
+        except OSError as exc:
+            QtWidgets.QMessageBox.critical(self, "Delete Session", f"Could not delete session:\n{exc}")
+            self.set_status(f"Could not delete session: {exc}")
+            return
+
+        self.saved_session_paths = [item_path for item_path in self.saved_session_paths if str(item_path).lower() != str(path).lower()]
+        try:
+            save_session_index(self.current_workspace(), self.saved_session_paths)
+        except OSError as exc:
+            self.append_event(f"Could not update session index: {exc}", "warning")
+        if self.session_file and str(self.session_file).lower() == str(path).lower():
+            self.session_file = None
+        self.refresh_session_list()
+        self.set_status(f"Deleted session: {path}")
+
+    def session_payload(self) -> dict[str, Any]:
+        return {
+            "version": 1,
+            "saved_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "state": workflow_state_to_dict(self.state),
+            "roles": [role_to_dict(role) for role in self.roles],
+            "conversation_lines": list(self.conversation_lines),
+            "activity_lines": list(self.activity_lines),
+            "event_lines": list(self.event_lines),
+            "raw_lines": list(self.raw_lines),
+            "final_text_by_role": dict(self.final_text_by_role),
+            "agent_buffers": dict(self.agent_buffers),
+            "seen_handoffs": sorted(self.seen_handoffs),
+            "pending_handoff": handoff_to_dict(self.pending_handoff),
+            "pending_relay_message": self.pending_relay_message,
+            "phase": self.phase,
+            "phase_detail": self.phase_detail,
+        }
+
+    def choose_session_save_path(self) -> Path | None:
+        start_path = str(self.session_file or self.default_session_path())
+        path, _selected_filter = QtWidgets.QFileDialog.getSaveFileName(
+            self,
+            "Save Workbench Session",
+            start_path,
+            SESSION_FILE_FILTER,
+        )
+        if not path:
+            return None
+        session_path = Path(path)
+        if session_path.suffix.lower() != ".json":
+            session_path = session_path.with_name(session_path.name + SESSION_FILE_SUFFIX)
+        return session_path
+
+    def save_session(self) -> None:
+        if self.session_file is None:
+            self.save_session_as()
+            return
+        self.write_session_file(self.session_file)
+
+    def save_session_as(self) -> None:
+        path = self.choose_session_save_path()
+        if path is None:
+            return
+        self.write_session_file(path)
+
+    def write_session_file(self, path: Path, announce: bool = True) -> None:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(self.session_payload(), indent=2, ensure_ascii=False), encoding="utf-8")
+        except OSError as exc:
+            if announce:
+                QtWidgets.QMessageBox.critical(self, "Save Session", f"Could not save session:\n{exc}")
+            self.set_status(f"Could not save session: {exc}")
+            return
+        self.session_file = path
+        self.register_session_path(path)
+        if announce:
+            self.set_status(f"Saved session: {path}")
+            self.append_event(f"Session saved: {path}")
+
+    def auto_save_session(self) -> None:
+        if self.session_file is not None:
+            self.write_session_file(self.session_file, announce=False)
+
+    def load_session(self) -> None:
+        if self.runner and self.runner.process and self.runner.process.poll() is None:
+            self.set_status("Stop the running agent before loading a session.")
+            return
+
+        start_path = str(self.session_file or self.default_session_path())
+        path, _selected_filter = QtWidgets.QFileDialog.getOpenFileName(
+            self,
+            "Load Workbench Session",
+            start_path,
+            SESSION_FILE_FILTER,
+        )
+        if not path:
+            return
+        self.load_session_file(Path(path))
+
+    def load_session_file(self, path: Path) -> None:
+        if self.runner and self.runner.process and self.runner.process.poll() is None:
+            self.set_status("Stop the running agent before loading a session.")
+            return
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            QtWidgets.QMessageBox.critical(self, "Load Session", f"Could not load session:\n{exc}")
+            self.set_status(f"Could not load session: {exc}")
+            return
+        if not isinstance(loaded, dict):
+            QtWidgets.QMessageBox.critical(self, "Load Session", "Session file does not contain a JSON object.")
+            return
+
+        state_data = loaded.get("state") if isinstance(loaded.get("state"), dict) else {}
+        roles_data = loaded.get("roles") if isinstance(loaded.get("roles"), list) else []
+        roles = [role for item in roles_data if isinstance(item, dict) for role in [role_from_dict(item)] if role]
+        if not roles:
+            QtWidgets.QMessageBox.critical(self, "Load Session", "Session file does not contain any roles.")
+            return
+
+        self.state = workflow_state_from_dict(state_data)
+        self.roles = roles
+        self.saved_session_paths = []
+        self.state.current_role_index = max(0, min(self.state.current_role_index, len(self.roles) - 1))
+        self.conversation_lines = self._string_list(loaded.get("conversation_lines"))[-120:]
+        self.activity_lines = self._string_list(loaded.get("activity_lines"))[-MAX_LOG_LINES:]
+        self.event_lines = self._string_list(loaded.get("event_lines"))[-MAX_LOG_LINES:]
+        self.raw_lines = self._string_list(loaded.get("raw_lines"))[-MAX_RAW_LINES:]
+        self.final_text_by_role = self._string_dict(loaded.get("final_text_by_role"))
+        self.agent_buffers = self._string_dict(loaded.get("agent_buffers"))
+        self.seen_handoffs = set(self._string_list(loaded.get("seen_handoffs")))
+        self.pending_handoff = handoff_from_dict(loaded.get("pending_handoff"))
+        self.pending_relay_message = str(loaded.get("pending_relay_message") or "")
+        self.active_role = None
+        self.run_started_at = 0.0
+        self.session_file = path
+        self.register_session_path(path)
+
+        self.sync_controls_from_state()
+        self._rebuild_role_status_buttons()
+        self._sync_role_editor()
+        self.set_phase(str(loaded.get("phase") or "Idle"), None, str(loaded.get("phase_detail") or "Session loaded."))
+        self.refresh_all_outputs()
+        self.refresh_artifacts()
+        self.set_status(f"Loaded session: {path}")
+
+    @staticmethod
+    def _string_list(value: Any) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        return [str(item) for item in value]
+
+    @staticmethod
+    def _string_dict(value: Any) -> dict[str, str]:
+        if not isinstance(value, dict):
+            return {}
+        return {str(key): str(item) for key, item in value.items()}
+
+    def sync_controls_from_state(self) -> None:
+        self.goal_input.blockSignals(True)
+        self.goal_input.setPlainText(self.state.goal)
+        self.goal_input.blockSignals(False)
+
+        self.workspace_input.blockSignals(True)
+        self.workspace_input.setText(self.state.cwd)
+        self.workspace_input.blockSignals(False)
+
+        self.model_input.blockSignals(True)
+        self.model_input.setText(self.state.model)
+        self.model_input.blockSignals(False)
+
+        self.codex_cmd_input.blockSignals(True)
+        self.codex_cmd_input.setText(self.state.codex_cmd)
+        self.codex_cmd_input.blockSignals(False)
+
+        self.sandbox_dropdown.blockSignals(True)
+        if self.sandbox_dropdown.findText(self.state.sandbox) == -1:
+            self.sandbox_dropdown.addItem(self.state.sandbox)
+        self.sandbox_dropdown.setCurrentText(self.state.sandbox)
+        self.sandbox_dropdown.blockSignals(False)
+
+        self.bypass_checkbox.blockSignals(True)
+        self.bypass_checkbox.setChecked(self.state.bypass_approvals_and_sandbox)
+        self.bypass_checkbox.blockSignals(False)
+
+        self.skip_git_checkbox.blockSignals(True)
+        self.skip_git_checkbox.setChecked(self.state.skip_git_check)
+        self.skip_git_checkbox.blockSignals(False)
+
+        self.ephemeral_checkbox.blockSignals(True)
+        self.ephemeral_checkbox.setChecked(self.state.ephemeral)
+        self.ephemeral_checkbox.blockSignals(False)
+
+        self.auto_advance_checkbox.blockSignals(True)
+        self.auto_advance_checkbox.setChecked(self.state.auto_advance)
+        self.auto_advance_checkbox.blockSignals(False)
+
+        self.extra_args_input.blockSignals(True)
+        self.extra_args_input.setText(self.state.extra_args)
+        self.extra_args_input.blockSignals(False)
 
     # ----------------------------------------------------------- workflow
 
@@ -1025,7 +1541,7 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
 
     def start_current_role(self) -> None:
         role = self.current_role()
-        cwd = Path(self.state.cwd.strip() or Path.cwd())
+        cwd = self.current_workspace()
         if not cwd.exists() or not cwd.is_dir():
             self.set_status(f"Workspace folder does not exist: {cwd}")
             return
@@ -1035,6 +1551,7 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
             self.set_phase("Waiting", role.name, "Another Codex process is still shutting down.")
             return
 
+        self.ensure_session_file()
         self.artifacts_dir().mkdir(exist_ok=True)
         role.status = "running"
         self.active_role = role
@@ -1131,6 +1648,7 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
             self.set_phase("Blocked", role.name, first_line)
 
         self.refresh_all_outputs()
+        self.auto_save_session()
 
     @QtCore.pyqtSlot(dict)
     def handle_event(self, event: dict[str, Any]) -> None:
@@ -1146,6 +1664,7 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
             had_session = bool(role and role.session_id)
             if role and thread_id:
                 role.session_id = thread_id
+                self.auto_save_session()
             self.append_event(f"{role_name}: thread started {thread_id}".strip())
             mode = "resumed" if had_session else "started"
             self.set_phase("Connected", role_name, f"Codex thread {mode}.")
@@ -1178,6 +1697,8 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
     def handle_item_event(self, role_name: str, event_type: str, event: dict[str, Any]) -> None:
         item = event.get("item") if isinstance(event.get("item"), dict) else event
         item_type = str(item.get("type") or item.get("item_type") or item.get("kind") or "item")
+        status = str(item.get("status") or event_type.rsplit(".", 1)[-1])
+        is_start_event = event_type == "item.started" or status in {"started", "in_progress", "running"}
 
         if item_type == "agent_message":
             text = self.extract_text(item)
@@ -1194,16 +1715,25 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
         if item_type == "command_execution":
             command = item.get("command") or item.get("cmd") or item.get("display_command") or "command"
             exit_code = item.get("exit_code")
-            status = item.get("status") or event_type.rsplit(".", 1)[-1]
+            if is_start_event:
+                self.set_phase("Working", role_name, str(command))
+                self.append_event(f"{role_name}: command started")
+                return
             self.append_activity(f"[{role_name.lower()} {status} exit={exit_code}] {command}")
             self.set_phase("Working", role_name, str(command))
             output = item.get("aggregated_output") or item.get("output") or item.get("stdout")
             if output:
-                self.append_activity(str(output).rstrip())
-            self.append_event(f"{role_name}: command_execution")
+                self.append_command_output(role_name, str(output).rstrip())
+            if self.command_failed(status, exit_code):
+                self.record_item_warning(role_name, f"command {status} exit={exit_code}: {command}")
+            self.append_event(f"{role_name}: command_execution {status}")
             return
 
         if item_type == "file_change":
+            if is_start_event:
+                self.set_phase("Editing", role_name, "File change in progress.")
+                self.append_event(f"{role_name}: file_change started")
+                return
             changes = item.get("changes")
             if isinstance(changes, list) and changes:
                 for change in changes:
@@ -1213,8 +1743,12 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
                         self.append_activity(f"[{role_name.lower()} file {kind}] {path}".rstrip())
             else:
                 self.append_activity(f"[{role_name.lower()} file_change] {self.compact_json(item)}")
-            self.append_event(f"{role_name}: file_change")
+            self.append_event(f"{role_name}: file_change {status}")
             self.set_phase("Editing", role_name, "File changes detected.")
+            return
+
+        if item_type in {"error", "failure"}:
+            self.record_item_warning(role_name, self.compact_json(item))
             return
 
         if item_type in {"mcp_tool_call", "web_search", "todo_list"}:
@@ -1237,6 +1771,7 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
             f"{relay_block}"
             f"Your role instruction:\n{role.prompt.strip()}\n\n"
             "Use the workspace as the source of truth. Store handoff markdown in the artifacts folder.\n"
+            "Read any needed artifact files directly from disk; artifact contents are not pasted here.\n"
             f"Expected artifact: artifacts/{role.artifact_name}\n\n"
             f"{handoff_rules}\n\n"
             f"Existing artifacts:\n{artifacts if artifacts else '(none yet)'}\n"
@@ -1377,17 +1912,59 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
         body = " ".join(handoff.body.lower().split())
         return f"{handoff.source_role}|{handoff.marker}|{body}"
 
+    @staticmethod
+    def command_failed(status: str, exit_code: Any) -> bool:
+        normalized = status.lower()
+        if normalized in {"failed", "failure", "error", "errored", "cancelled"}:
+            return True
+        if exit_code in (None, "", 0, "0"):
+            return False
+        return True
+
+    def record_item_warning(self, role_name: str, detail: str) -> None:
+        text = detail.strip() or "item warning"
+        self.append_activity(f"[{role_name.lower()} warning] {text}")
+        self.append_event(f"{role_name}: {text}", "warning")
+        self.set_phase("Warning", role_name, text)
+
     def read_artifact_context(self) -> str:
         parts = []
         artifact_dir = self.artifacts_dir()
         for role in self.roles:
             path = artifact_dir / role.artifact_name
-            if path.exists():
-                try:
-                    parts.append(f"--- artifacts/{role.artifact_name} ---\n{path.read_text(encoding='utf-8', errors='replace')}")
-                except OSError as exc:
-                    parts.append(f"--- artifacts/{role.artifact_name} ---\nCould not read artifact: {exc}")
+            artifact_ref = f"artifacts/{role.artifact_name}"
+            if not path.exists():
+                parts.append(f"missing  {artifact_ref}")
+                continue
+            try:
+                size = path.stat().st_size
+            except OSError as exc:
+                parts.append(f"error    {artifact_ref} ({exc})")
+                continue
+            parts.append(f"ok       {artifact_ref} ({size:,} bytes)")
         return "\n\n".join(parts)
+
+    def append_command_output(self, role_name: str, output: str) -> None:
+        if len(output) <= MAX_INLINE_ACTIVITY_OUTPUT_CHARS:
+            self.append_activity(output)
+            return
+        try:
+            output_dir = self.artifacts_dir() / ".workbench-command-output"
+            output_dir.mkdir(parents=True, exist_ok=True)
+            timestamp = time.strftime("%Y%m%d-%H%M%S")
+            slug = session_slug(role_name)
+            path = output_dir / f"{timestamp}-{slug}.txt"
+            suffix = 2
+            while path.exists():
+                path = output_dir / f"{timestamp}-{slug}-{suffix}.txt"
+                suffix += 1
+            path.write_text(output, encoding="utf-8", errors="replace")
+        except OSError as exc:
+            self.append_activity(f"[{role_name.lower()} output save failed] {exc}")
+            self.append_activity(output)
+            return
+        relative = path.relative_to(self.current_workspace())
+        self.append_activity(f"[{role_name.lower()} output saved] {relative} ({len(output):,} chars)")
 
     def refresh_artifacts(self) -> None:
         artifact_dir = self.artifacts_dir()
@@ -1506,7 +2083,7 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
         self.events_output.setPlainText(self.log_text(self.event_lines))
 
     PHASE_DONE = {"Complete"}
-    PHASE_ERROR = {"Blocked", "Error"}
+    PHASE_ERROR = {"Blocked", "Error", "Warning"}
     PHASE_WAITING = {"Handoff Ready"}
 
     def set_phase(self, phase: str, agent_name: str | None, detail: str) -> None:
@@ -1757,9 +2334,15 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
         self.set_status(f"Deleted preset '{name}'.")
 
     def new_workflow(self) -> None:
+        if self.runner and self.runner.process and self.runner.process.poll() is None:
+            self.set_status("Stop the running agent before starting a new workflow.")
+            return
+        self.session_file = None
+        self.refresh_session_list()
         if "Default Pipeline" in self.presets:
             self._sync_preset_dropdowns("Default Pipeline")
             self.load_selected_preset()
+        self.clear_agent_sessions()
         self.clear_outputs()
 
     def duplicate_workflow(self) -> None:
@@ -1784,13 +2367,19 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
         old_cwd = self.state.cwd
         self.state.cwd = value
         if value != old_cwd:
+            self.session_file = None
+            self.saved_session_paths = []
             self.clear_agent_sessions()
+            self.refresh_session_list()
         self.refresh_artifacts()
 
     def use_app_folder(self) -> None:
-        self.state.cwd = str(Path(__file__).resolve().parent)
+        self.state.cwd = str(app_dir())
+        self.session_file = None
+        self.saved_session_paths = []
         self.clear_agent_sessions()
         self.workspace_input.setText(self.state.cwd)
+        self.refresh_session_list()
         self.refresh_artifacts()
         self.set_status(f"Workspace set to {self.state.cwd}")
 
