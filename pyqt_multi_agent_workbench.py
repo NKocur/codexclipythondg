@@ -788,11 +788,59 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
 
     def _build_agents_tab(self) -> QtWidgets.QWidget:
         agents_tab = QtWidgets.QWidget()
-        layout = QtWidgets.QVBoxLayout(agents_tab)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.addWidget(self._build_presets_box())
-        layout.addWidget(self._build_role_prompt_tab())
+        root = QtWidgets.QHBoxLayout(agents_tab)
+        root.setContentsMargins(8, 8, 8, 8)
+        root.setSpacing(8)
+
+        splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
+        splitter.addWidget(self._build_agents_navigation_panel())
+        splitter.addWidget(self._build_role_prompt_tab())
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([330, 980])
+        root.addWidget(splitter)
         return agents_tab
+
+    def _build_agents_navigation_panel(self) -> QtWidgets.QWidget:
+        panel = QtWidgets.QWidget()
+        panel.setMinimumWidth(290)
+        panel.setMaximumWidth(390)
+        layout = QtWidgets.QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+
+        layout.addWidget(self._build_presets_box())
+        layout.addWidget(self._build_role_list_box(), 1)
+        return panel
+
+    def _build_role_list_box(self) -> QtWidgets.QWidget:
+        box = QtWidgets.QGroupBox("Pipeline Roles")
+        layout = QtWidgets.QVBoxLayout(box)
+
+        self.role_list = QtWidgets.QListWidget()
+        self.role_list.setMinimumHeight(180)
+        self.role_list.currentRowChanged.connect(self.on_role_list_selection)
+        layout.addWidget(self.role_list, 1)
+
+        role_btn_grid = QtWidgets.QGridLayout()
+        add_role_btn = QtWidgets.QPushButton("Add Role")
+        add_role_btn.clicked.connect(self.add_role)
+        role_btn_grid.addWidget(add_role_btn, 0, 0)
+        import_role_btn = QtWidgets.QPushButton("Import Saved")
+        import_role_btn.clicked.connect(self.import_role)
+        role_btn_grid.addWidget(import_role_btn, 0, 1)
+        remove_role_btn = QtWidgets.QPushButton("Remove")
+        remove_role_btn.clicked.connect(self.remove_role)
+        role_btn_grid.addWidget(remove_role_btn, 1, 0)
+        move_up_btn = QtWidgets.QPushButton("Move Up")
+        move_up_btn.clicked.connect(lambda: self.move_role(-1))
+        role_btn_grid.addWidget(move_up_btn, 1, 1)
+        move_down_btn = QtWidgets.QPushButton("Move Down")
+        move_down_btn.clicked.connect(lambda: self.move_role(1))
+        role_btn_grid.addWidget(move_down_btn, 2, 0, 1, 2)
+        layout.addLayout(role_btn_grid)
+
+        return box
 
     def _build_menu(self) -> None:
         menubar = self.menuBar()
@@ -1052,37 +1100,8 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
         return container
 
     def _build_role_prompt_tab(self) -> QtWidgets.QWidget:
-        container = QtWidgets.QWidget()
+        container = QtWidgets.QGroupBox("Role Editor")
         layout = QtWidgets.QVBoxLayout(container)
-
-        roles_label = QtWidgets.QLabel("Pipeline Roles")
-        roles_label.setObjectName("section")
-        layout.addWidget(roles_label)
-
-        self.role_list = QtWidgets.QListWidget()
-        self.role_list.setFixedHeight(110)
-        self.role_list.currentRowChanged.connect(self.on_role_list_selection)
-        layout.addWidget(self.role_list)
-
-        role_btn_row = QtWidgets.QHBoxLayout()
-        add_role_btn = QtWidgets.QPushButton("Add Role")
-        add_role_btn.clicked.connect(self.add_role)
-        role_btn_row.addWidget(add_role_btn)
-        import_role_btn = QtWidgets.QPushButton("Import Saved Role...")
-        import_role_btn.clicked.connect(self.import_role)
-        role_btn_row.addWidget(import_role_btn)
-        remove_role_btn = QtWidgets.QPushButton("Remove Role")
-        remove_role_btn.clicked.connect(self.remove_role)
-        role_btn_row.addWidget(remove_role_btn)
-        move_up_btn = QtWidgets.QPushButton("Move Up")
-        move_up_btn.clicked.connect(lambda: self.move_role(-1))
-        role_btn_row.addWidget(move_up_btn)
-        move_down_btn = QtWidgets.QPushButton("Move Down")
-        move_down_btn.clicked.connect(lambda: self.move_role(1))
-        role_btn_row.addWidget(move_down_btn)
-        role_btn_row.addStretch(1)
-        layout.addLayout(role_btn_row)
-
         name_row = QtWidgets.QHBoxLayout()
         name_row.addWidget(self._fixed_label("Role name", 90))
         self.role_name_input = QtWidgets.QLineEdit(self.current_role().name)
@@ -1100,14 +1119,15 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
         self.role_prompt_input = QtWidgets.QPlainTextEdit(self.current_role().prompt)
         self.role_prompt_input.setFont(QtGui.QFont(MONO_FONT_FAMILY, 10))
         self.role_prompt_input.textChanged.connect(self.on_role_prompt_changed)
-        self.role_prompt_input.setFixedHeight(140)
-        layout.addWidget(self.role_prompt_input)
+        self.role_prompt_input.setMinimumHeight(260)
+        layout.addWidget(self.role_prompt_input, 1)
 
         handoff_targets_label = QtWidgets.QLabel("Allowed handoff targets")
         handoff_targets_label.setObjectName("section")
         layout.addWidget(handoff_targets_label)
         self.handoff_targets_list = QtWidgets.QListWidget()
-        self.handoff_targets_list.setFixedHeight(90)
+        self.handoff_targets_list.setMinimumHeight(90)
+        self.handoff_targets_list.setMaximumHeight(150)
         self.handoff_targets_list.itemChanged.connect(self.on_handoff_targets_changed)
         layout.addWidget(self.handoff_targets_list)
         role_lib_row = QtWidgets.QHBoxLayout()
@@ -1119,8 +1139,6 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
         role_lib_row.addWidget(delete_role_lib_btn)
         role_lib_row.addStretch(1)
         layout.addLayout(role_lib_row)
-
-        layout.addStretch(1)
         return container
 
     def _build_execution_settings_box(self) -> QtWidgets.QWidget:
