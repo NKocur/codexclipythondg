@@ -1170,6 +1170,7 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
         role_lib_row.addWidget(delete_role_lib_btn)
         role_lib_row.addStretch(1)
         layout.addLayout(role_lib_row)
+        self._sync_role_editor()
         return container
 
     def _build_execution_settings_box(self) -> QtWidgets.QWidget:
