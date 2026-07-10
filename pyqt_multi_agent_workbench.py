@@ -753,6 +753,7 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
         self.phase_detail = "No agent is running."
         self.artifact_outputs: dict[str, QtWidgets.QPlainTextEdit] = {}
         self.role_library, self.presets = load_library()
+        self.current_preset_name = "Default Pipeline" if "Default Pipeline" in self.presets else ""
         self._role_button_widgets: list[QtWidgets.QPushButton] = []
         self._preset_dropdowns: list[QtWidgets.QComboBox] = []
         self.saved_session_paths: list[Path] = []
@@ -946,6 +947,8 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
 
         dropdown = QtWidgets.QComboBox()
         dropdown.addItems(sorted(self.presets.keys()))
+        if self.current_preset_name:
+            dropdown.setCurrentText(self.current_preset_name)
         if not self._preset_dropdowns:
             self.preset_dropdown = dropdown
         self._preset_dropdowns.append(dropdown)
@@ -2425,12 +2428,16 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
         self.handoff_output.setPlainText(self.handoff_status_text())
 
     def _sync_preset_dropdowns(self, selected: str | None = None) -> None:
+        if selected is not None:
+            self.current_preset_name = selected
+        elif self.current_preset_name not in self.presets:
+            self.current_preset_name = next(iter(sorted(self.presets)), "")
         for dropdown in self._preset_dropdowns:
             dropdown.blockSignals(True)
             dropdown.clear()
             dropdown.addItems(sorted(self.presets.keys()))
-            if selected is not None:
-                dropdown.setCurrentText(selected)
+            if self.current_preset_name:
+                dropdown.setCurrentText(self.current_preset_name)
             dropdown.blockSignals(False)
 
     def load_selected_preset(self, dropdown: QtWidgets.QComboBox | None = None) -> None:
@@ -2484,6 +2491,7 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
             self.role_library[role.name] = role_library_entry(role)
         self.presets[name] = [role.name for role in self.roles]
         save_library(self.role_library, self.presets)
+        self.current_preset_name = name
         self._sync_preset_dropdowns(name)
         self.set_status(f"Saved preset '{name}' ({len(self.roles)} roles).")
 
@@ -2505,6 +2513,8 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
             return
         del self.presets[name]
         save_library(self.role_library, self.presets)
+        if self.current_preset_name == name:
+            self.current_preset_name = "Default Pipeline" if "Default Pipeline" in self.presets else next(iter(sorted(self.presets)), "")
         self._sync_preset_dropdowns()
         self.set_status(f"Deleted preset '{name}'.")
 
