@@ -1,24 +1,36 @@
-# Codex Exec JSONL Console
+﻿# Multi-Agent Codex Workbench
 
-DragonGUI app that runs Codex through the structured CLI path instead of scraping an interactive PowerShell window.
-
-Run it with the Python 3.12 environment that has DragonGUI installed:
+PyQt workbench for running a file-backed multi-agent Codex workflow. The canonical app entry point is:
 
 ```powershell
-py -3.12 .\powershell_codex_viewer.py
+py -3.12 .\pyqt_multi_agent_workbench.py
 ```
 
-Use the prompt box to send a task to Codex. The app launches:
+The app delegates Codex CLI execution to `powershell_codex_viewer.py`, which launches `codex exec --json` and streams JSONL events back to the UI.
+
+## Important Files
+
+- `pyqt_multi_agent_workbench.py`: main GUI application.
+- `powershell_codex_viewer.py`: Codex CLI runner/helper used by the GUI.
+- `role_presets.json`: saved role library and presets.
+- `pyqt_multi_agent_workbench.spec`: PyInstaller packaging spec.
+- `scripts/build_exe.ps1`: Windows build script.
+
+## Folders
+
+- `docs/`: historical notes and troubleshooting docs.
+- `legacy/`: older prototype workbench files kept for reference.
+- `artifacts/`: generated workflow outputs, ignored by git.
+- `.codex-workbench-sessions/`: saved runtime sessions, ignored by git.
+
+## Build
 
 ```powershell
-codex exec --json --color never --sandbox workspace-write --cd <workspace> -
+.\scripts\build_exe.ps1
 ```
 
-and reads newline-delimited JSON events from stdout. It shows:
+Use `-InstallDeps` if PyInstaller or PyQt6 are missing:
 
-- **Final Response**: latest `agent_message` text.
-- **Activity**: command executions, file changes, tool calls, and related progress.
-- **Event Log**: lifecycle events such as `thread.started`, `turn.started`, and `turn.completed`.
-- **Raw JSONL**: recent raw events for debugging.
-
-This is intentionally different from the first terminal-scraping version. The Codex TUI is rendered for humans; `codex exec --json` is the reliable path for Python software.
+```powershell
+.\scripts\build_exe.ps1 -InstallDeps
+```

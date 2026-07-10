@@ -130,6 +130,7 @@ class AgentRole:
     prompt: str
     status: str = "queued"
     session_id: str = ""
+    allowed_handoffs: list[str] | None = None
 
 
 @dataclass
@@ -386,7 +387,7 @@ def _migrate_legacy_library(data: dict[str, Any]) -> tuple[dict[str, dict[str, s
     return roles, presets
 
 
-def load_library() -> tuple[dict[str, dict[str, str]], dict[str, list[str]]]:
+def load_library() -> tuple[dict[str, dict[str, Any]], dict[str, list[str]]]:
     data: dict[str, Any] = {}
     source_file = LIBRARY_FILE if LIBRARY_FILE.exists() else BUNDLED_LIBRARY_FILE
     if source_file.exists():
@@ -415,20 +416,42 @@ def load_library() -> tuple[dict[str, dict[str, str]], dict[str, list[str]]]:
     return roles, presets
 
 
-def save_library(roles: dict[str, dict[str, str]], presets: dict[str, list[str]]) -> None:
+def save_library(roles: dict[str, dict[str, Any]], presets: dict[str, list[str]]) -> None:
     LIBRARY_FILE.write_text(
         json.dumps({"roles": roles, "presets": presets}, indent=2, ensure_ascii=False), encoding="utf-8"
     )
 
 
-def role_to_dict(role: AgentRole) -> dict[str, str]:
-    return {
+def optional_string_list(data: dict[str, Any], key: str) -> list[str] | None:
+    if key not in data:
+        return None
+    value = data.get(key)
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value]
+
+
+def role_library_entry(role: AgentRole) -> dict[str, Any]:
+    entry: dict[str, Any] = {
+        "artifact_name": role.artifact_name,
+        "prompt": role.prompt,
+    }
+    if role.allowed_handoffs is not None:
+        entry["allowed_handoffs"] = list(role.allowed_handoffs)
+    return entry
+
+
+def role_to_dict(role: AgentRole) -> dict[str, Any]:
+    data = {
         "name": role.name,
         "artifact_name": role.artifact_name,
         "prompt": role.prompt,
         "status": role.status,
         "session_id": role.session_id,
     }
+    if role.allowed_handoffs is not None:
+        data["allowed_handoffs"] = list(role.allowed_handoffs)
+    return data
 
 
 def role_from_dict(data: dict[str, Any]) -> AgentRole | None:
@@ -441,6 +464,7 @@ def role_from_dict(data: dict[str, Any]) -> AgentRole | None:
         prompt=str(data.get("prompt") or ""),
         status=str(data.get("status") or "queued"),
         session_id=str(data.get("session_id") or ""),
+        allowed_handoffs=optional_string_list(data, "allowed_handoffs"),
     )
 
 
@@ -686,7 +710,14 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
 
         self.state = WorkflowState()
         self.roles = [
-            AgentRole(role.name, role.artifact_name, role.prompt, role.status, role.session_id)
+            AgentRole(
+                role.name,
+                role.artifact_name,
+                role.prompt,
+                role.status,
+                role.session_id,
+                list(role.allowed_handoffs) if role.allowed_handoffs is not None else None,
+            )
             for role in ROLE_PROMPTS
         ]
         self.runner: Any = None
@@ -1072,6 +1103,13 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
         self.role_prompt_input.setFixedHeight(140)
         layout.addWidget(self.role_prompt_input)
 
+        handoff_targets_label = QtWidgets.QLabel("Allowed handoff targets")
+        handoff_targets_label.setObjectName("section")
+        layout.addWidget(handoff_targets_label)
+        self.handoff_targets_list = QtWidgets.QListWidget()
+        self.handoff_targets_list.setFixedHeight(90)
+        self.handoff_targets_list.itemChanged.connect(self.on_handoff_targets_changed)
+        layout.addWidget(self.handoff_targets_list)
         role_lib_row = QtWidgets.QHBoxLayout()
         save_role_btn = QtWidgets.QPushButton("Save Role to Library")
         save_role_btn.clicked.connect(self.save_role)
@@ -1627,7 +1665,7 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
                     self.set_status(
                         f"Handoff ready: {handoff.source_role} -> {handoff.target_role}. Click Relay Pending."
                     )
-            elif self.state.current_role_index < len(self.roles) - 1:
+            elif role.allowed_handoffs is None and self.state.current_role_index < len(self.roles) - 1:
                 self.state.current_role_index += 1
                 self.current_role().status = "waiting"
                 self._sync_role_editor()
@@ -1777,12 +1815,20 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
             f"Existing artifacts:\n{artifacts if artifacts else '(none yet)'}\n"
         )
 
+    def allowed_handoff_targets(self, role: AgentRole) -> list[AgentRole]:
+        targets = [target for target in self.roles if target.name != role.name]
+        if role.allowed_handoffs is None:
+            return targets
+        allowed = set(role.allowed_handoffs)
+        return [target for target in targets if target.name in allowed]
+
     def handoff_instructions(self, role: AgentRole) -> str:
-        markers = ", ".join(f"{target.name}: {handoff_marker(target.name)}" for target in self.roles if target.name != role.name)
+        targets = self.allowed_handoff_targets(role)
+        markers = ", ".join(f"{target.name}: {handoff_marker(target.name)}" for target in targets)
         return (
             "Agent handoff protocol:\n"
             f"- To pass work to another agent, write that agent's marker, then the direct message body, then {HANDOFF_END}, then {HANDOFF_DONE}.\n"
-            f"- Available target markers: {markers}.\n"
+            f"- Available target markers: {markers if markers else '(none enabled for this role)'}.\n"
             f"- To end an approved review loop, write {APPROVED} then {HANDOFF_DONE}.\n"
             "- The orchestrator relays only the body inside the handoff block."
         )
@@ -1870,9 +1916,9 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
 
     def extract_best_handoff(self, source_role: str, buffer: str) -> Handoff | None:
         candidates: list[Handoff] = []
-        for target in self.roles:
-            if target.name == source_role:
-                continue
+        source = self.role_by_name(source_role)
+        targets = self.allowed_handoff_targets(source) if source else [target for target in self.roles if target.name != source_role]
+        for target in targets:
             marker = handoff_marker(target.name)
             body = self.extract_latest_valid_handoff(buffer, marker)
             if body and self.validate_handoff_body(source_role, marker, body):
@@ -2134,6 +2180,35 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
         self.role_list.blockSignals(True)
         self.role_list.setCurrentRow(self.state.current_role_index)
         self.role_list.blockSignals(False)
+        self._sync_handoff_targets_editor()
+
+    def _sync_handoff_targets_editor(self) -> None:
+        if not hasattr(self, "handoff_targets_list"):
+            return
+        role = self.current_role()
+        allowed = role.allowed_handoffs
+        allowed_set = set(allowed or [])
+        self.handoff_targets_list.blockSignals(True)
+        self.handoff_targets_list.clear()
+        for target in self.roles:
+            if target.name == role.name:
+                continue
+            item = QtWidgets.QListWidgetItem(target.name)
+            item.setFlags(item.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable)
+            checked = allowed is None or target.name in allowed_set
+            item.setCheckState(QtCore.Qt.CheckState.Checked if checked else QtCore.Qt.CheckState.Unchecked)
+            self.handoff_targets_list.addItem(item)
+        self.handoff_targets_list.blockSignals(False)
+
+    def _selected_handoff_targets(self) -> list[str]:
+        selected: list[str] = []
+        if not hasattr(self, "handoff_targets_list"):
+            return selected
+        for index in range(self.handoff_targets_list.count()):
+            item = self.handoff_targets_list.item(index)
+            if item.checkState() == QtCore.Qt.CheckState.Checked:
+                selected.append(item.text())
+        return selected
 
     def _refresh_role_list(self) -> None:
         self.role_list.blockSignals(True)
@@ -2187,7 +2262,12 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
                 name = f"{base_name} ({suffix})"
                 suffix += 1
 
-        new_role = AgentRole(name, entry["artifact_name"], entry["prompt"])
+        new_role = AgentRole(
+            name,
+            entry["artifact_name"],
+            entry["prompt"],
+            allowed_handoffs=optional_string_list(entry, "allowed_handoffs"),
+        )
         insert_at = self.state.current_role_index + 1
         self.roles.insert(insert_at, new_role)
         self.state.current_role_index = insert_at
@@ -2199,7 +2279,7 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
 
     def save_role(self) -> None:
         role = self.current_role()
-        self.role_library[role.name] = {"artifact_name": role.artifact_name, "prompt": role.prompt}
+        self.role_library[role.name] = role_library_entry(role)
         save_library(self.role_library, self.presets)
         self.set_status(f"Saved role '{role.name}' to the library.")
 
@@ -2250,11 +2330,23 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
         self.current_role().name = value
         self._refresh_role_list()
         self._rebuild_role_status_buttons()
+        self._sync_handoff_targets_editor()
         self.refresh_all_outputs()
 
     def on_role_artifact_changed(self, value: str) -> None:
         self.current_role().artifact_name = value
         self.refresh_all_outputs()
+
+    def on_handoff_targets_changed(self, _item: QtWidgets.QListWidgetItem) -> None:
+        role = self.current_role()
+        target_names = [target.name for target in self.roles if target.name != role.name]
+        selected = self._selected_handoff_targets()
+        if set(selected) == set(target_names):
+            role.allowed_handoffs = None
+        else:
+            role.allowed_handoffs = selected
+        self.current_output.setPlainText(self.current_step_text())
+        self.handoff_output.setPlainText(self.handoff_status_text())
 
     def _sync_preset_dropdowns(self, selected: str | None = None) -> None:
         for dropdown in self._preset_dropdowns:
@@ -2278,7 +2370,12 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
 
         missing = [role_name for role_name in order if role_name not in self.role_library]
         roles = [
-            AgentRole(role_name, self.role_library[role_name]["artifact_name"], self.role_library[role_name]["prompt"])
+            AgentRole(
+                role_name,
+                self.role_library[role_name]["artifact_name"],
+                self.role_library[role_name]["prompt"],
+                allowed_handoffs=optional_string_list(self.role_library[role_name], "allowed_handoffs"),
+            )
             for role_name in order
             if role_name in self.role_library
         ]
@@ -2306,7 +2403,7 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
             return
         name = name.strip()
         for role in self.roles:
-            self.role_library[role.name] = {"artifact_name": role.artifact_name, "prompt": role.prompt}
+            self.role_library[role.name] = role_library_entry(role)
         self.presets[name] = [role.name for role in self.roles]
         save_library(self.role_library, self.presets)
         self._sync_preset_dropdowns(name)
