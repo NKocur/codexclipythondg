@@ -131,6 +131,8 @@ class AgentRole:
     status: str = "queued"
     session_id: str = ""
     allowed_handoffs: list[str] | None = None
+    model: str = ""
+    model_reasoning_effort: str = ""
 
 
 @dataclass
@@ -436,6 +438,10 @@ def role_library_entry(role: AgentRole) -> dict[str, Any]:
         "artifact_name": role.artifact_name,
         "prompt": role.prompt,
     }
+    if role.model.strip():
+        entry["model"] = role.model.strip()
+    if role.model_reasoning_effort.strip():
+        entry["model_reasoning_effort"] = role.model_reasoning_effort.strip()
     if role.allowed_handoffs is not None:
         entry["allowed_handoffs"] = list(role.allowed_handoffs)
     return entry
@@ -449,6 +455,10 @@ def role_to_dict(role: AgentRole) -> dict[str, Any]:
         "status": role.status,
         "session_id": role.session_id,
     }
+    if role.model.strip():
+        data["model"] = role.model.strip()
+    if role.model_reasoning_effort.strip():
+        data["model_reasoning_effort"] = role.model_reasoning_effort.strip()
     if role.allowed_handoffs is not None:
         data["allowed_handoffs"] = list(role.allowed_handoffs)
     return data
@@ -465,6 +475,8 @@ def role_from_dict(data: dict[str, Any]) -> AgentRole | None:
         status=str(data.get("status") or "queued"),
         session_id=str(data.get("session_id") or ""),
         allowed_handoffs=optional_string_list(data, "allowed_handoffs"),
+        model=str(data.get("model") or ""),
+        model_reasoning_effort=str(data.get("model_reasoning_effort") or ""),
     )
 
 
@@ -717,6 +729,8 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
                 role.status,
                 role.session_id,
                 list(role.allowed_handoffs) if role.allowed_handoffs is not None else None,
+                role.model,
+                role.model_reasoning_effort,
             )
             for role in ROLE_PROMPTS
         ]
@@ -1116,6 +1130,23 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
         artifact_row.addWidget(self.role_artifact_input, 1)
         layout.addLayout(artifact_row)
 
+        role_model_row = QtWidgets.QHBoxLayout()
+        role_model_row.addWidget(self._fixed_label("Role model", 90))
+        self.role_model_input = QtWidgets.QLineEdit(self.current_role().model)
+        self.role_model_input.setPlaceholderText("Use global model")
+        self.role_model_input.textChanged.connect(self.on_role_model_changed)
+        role_model_row.addWidget(self.role_model_input, 1)
+        layout.addLayout(role_model_row)
+
+        effort_row = QtWidgets.QHBoxLayout()
+        effort_row.addWidget(self._fixed_label("Effort", 90))
+        self.role_effort_combo = QtWidgets.QComboBox()
+        self.role_effort_combo.setEditable(False)
+        self.role_effort_combo.addItems(["", "minimal", "low", "medium", "high"])
+        self.role_effort_combo.setCurrentText(self.current_role().model_reasoning_effort)
+        self.role_effort_combo.currentTextChanged.connect(self.on_role_effort_changed)
+        effort_row.addWidget(self.role_effort_combo, 1)
+        layout.addLayout(effort_row)
         self.role_prompt_input = QtWidgets.QPlainTextEdit(self.current_role().prompt)
         self.role_prompt_input.setFont(QtGui.QFont(MONO_FONT_FAMILY, 10))
         self.role_prompt_input.textChanged.connect(self.on_role_prompt_changed)
@@ -1629,7 +1660,8 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
             codex_cmd=self.state.codex_cmd,
             cwd=str(cwd),
             resume_session_id=role.session_id if not self.state.ephemeral else "",
-            model=self.state.model,
+            model=role.model.strip() or self.state.model,
+            model_reasoning_effort=role.model_reasoning_effort.strip(),
             sandbox=self.state.sandbox,
             extra_args=self.state.extra_args,
             bypass_approvals_and_sandbox=self.state.bypass_approvals_and_sandbox,
@@ -2067,12 +2099,21 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
             marker = ">" if index - 1 == self.state.current_role_index else " "
             memory = "session" if role.session_id else "new"
             lines.append(f"{marker} {index}. {role.name:<12} {role.status:<9} {memory}")
+        role = self.current_role()
+        effective_model = role.model.strip() or self.state.model.strip() or "global/default"
+        effective_effort = role.model_reasoning_effort.strip() or "global/default"
         lines.append("")
         lines.append("Current role")
-        lines.append(self.current_role().name)
+        lines.append(role.name)
+        lines.append("")
+        lines.append("Model")
+        lines.append(effective_model)
+        lines.append("")
+        lines.append("Effort")
+        lines.append(effective_effort)
         lines.append("")
         lines.append("Role instruction")
-        lines.append(self.current_role().prompt)
+        lines.append(role.prompt)
         return "\n".join(lines)
 
     def pipeline_text(self) -> str:
@@ -2195,6 +2236,12 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
         self.role_artifact_input.blockSignals(True)
         self.role_artifact_input.setText(role.artifact_name)
         self.role_artifact_input.blockSignals(False)
+        self.role_model_input.blockSignals(True)
+        self.role_model_input.setText(role.model)
+        self.role_model_input.blockSignals(False)
+        self.role_effort_combo.blockSignals(True)
+        self.role_effort_combo.setCurrentText(role.model_reasoning_effort)
+        self.role_effort_combo.blockSignals(False)
         self.role_list.blockSignals(True)
         self.role_list.setCurrentRow(self.state.current_role_index)
         self.role_list.blockSignals(False)
@@ -2285,6 +2332,8 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
             entry["artifact_name"],
             entry["prompt"],
             allowed_handoffs=optional_string_list(entry, "allowed_handoffs"),
+            model=str(entry.get("model") or ""),
+            model_reasoning_effort=str(entry.get("model_reasoning_effort") or ""),
         )
         insert_at = self.state.current_role_index + 1
         self.roles.insert(insert_at, new_role)
@@ -2355,6 +2404,14 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
         self.current_role().artifact_name = value
         self.refresh_all_outputs()
 
+    def on_role_model_changed(self, value: str) -> None:
+        self.current_role().model = value.strip()
+        self.current_output.setPlainText(self.current_step_text())
+
+    def on_role_effort_changed(self, value: str) -> None:
+        self.current_role().model_reasoning_effort = value.strip()
+        self.current_output.setPlainText(self.current_step_text())
+
     def on_handoff_targets_changed(self, _item: QtWidgets.QListWidgetItem) -> None:
         role = self.current_role()
         target_names = [target.name for target in self.roles if target.name != role.name]
@@ -2393,6 +2450,8 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
                 self.role_library[role_name]["artifact_name"],
                 self.role_library[role_name]["prompt"],
                 allowed_handoffs=optional_string_list(self.role_library[role_name], "allowed_handoffs"),
+                model=str(self.role_library[role_name].get("model") or ""),
+                model_reasoning_effort=str(self.role_library[role_name].get("model_reasoning_effort") or ""),
             )
             for role_name in order
             if role_name in self.role_library

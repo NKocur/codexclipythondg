@@ -94,6 +94,7 @@ class CodexRunState:
     cwd: str = field(default_factory=lambda: str(Path.cwd()))
     resume_session_id: str = ""
     model: str = ""
+    model_reasoning_effort: str = ""
     sandbox: str = "workspace-write"
     extra_args: str = ""
     bypass_approvals_and_sandbox: bool = True
@@ -246,6 +247,9 @@ class CodexExecRunner:
             cmd.append("--ephemeral")
         if self.state.model.strip():
             cmd.extend(["--model", self.state.model.strip()])
+        if self.state.model_reasoning_effort.strip():
+            effort = self.state.model_reasoning_effort.strip()
+            cmd.extend(["-c", f'model_reasoning_effort="{effort}"'])
         if self.state.extra_args.strip():
             cmd.extend(shlex.split(self.state.extra_args))
 
