@@ -49,10 +49,10 @@ $PythonCommand = Resolve-Python $Python
 Write-Host "Using Python: $PythonCommand"
 
 if ($InstallDeps) {
-    Invoke-Python $PythonCommand @("-m", "pip", "install", "--upgrade", "pyinstaller", "PyQt6")
+    Invoke-Python $PythonCommand @("-m", "pip", "install", "--upgrade", "pyinstaller", "PyQt6", "dragongui")
 }
 
-Invoke-Python $PythonCommand @("-c", "import PyInstaller, PyQt6; import powershell_codex_viewer; print('packaging dependencies ok')")
+Invoke-Python $PythonCommand @("-c", "import PyInstaller, PyQt6, dragongui; import powershell_codex_viewer; print('packaging dependencies ok')")
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host ""

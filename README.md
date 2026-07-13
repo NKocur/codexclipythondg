@@ -8,6 +8,13 @@ py -3.12 .\pyqt_multi_agent_workbench.py
 
 The app delegates Codex CLI execution to `powershell_codex_viewer.py`, which launches `codex exec --json` and streams JSONL events back to the UI.
 
+## Requirements
+
+- Python 3.11, 3.12, or 3.13. Python 3.12 is the primary build target used by the helper scripts.
+- Codex CLI available on `PATH` or configured in the app.
+- Runtime Python packages: `PyQt6` and `dragongui`.
+- Build Python packages: `PyInstaller`, `PyQt6`, and `dragongui`.
+
 ## Important Files
 
 - `pyqt_multi_agent_workbench.py`: main GUI application.
@@ -29,7 +36,7 @@ The app delegates Codex CLI execution to `powershell_codex_viewer.py`, which lau
 .\scripts\build_exe.ps1
 ```
 
-Use `-InstallDeps` if PyInstaller or PyQt6 are missing:
+Use `-InstallDeps` if PyInstaller, PyQt6, or dragongui are missing:
 
 ```powershell
 .\scripts\build_exe.ps1 -InstallDeps

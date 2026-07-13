@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import importlib
 import json
+import os
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any, Callable
 
 from PyQt6 import QtCore, QtGui, QtWidgets
@@ -18,6 +20,10 @@ _resolve_codex_command: Callable[[], str] | None = None
 MAX_LOG_LINES = 600
 MAX_RAW_LINES = 300
 MAX_INLINE_ACTIVITY_OUTPUT_CHARS = 6000
+INLINE_ACTIVITY_OUTPUT_PREVIEW_CHARS = 2000
+MAX_COMMAND_OUTPUT_SAVE_CHARS = 200_000
+MAX_COMMAND_OUTPUT_FILES = 50
+MAX_COMMAND_OUTPUT_TOTAL_BYTES = 50_000_000
 HANDOFF_MIN_LENGTH = 20
 HANDOFF_MAX_LENGTH = 6000
 HANDOFF_END = "[[END_HANDOFF]]"
@@ -72,6 +78,15 @@ def handoff_marker(role_name: str) -> str:
 
 
 def extract_latest_valid_handoff(buffer: str, marker: str) -> str:
+    candidates = extract_handoff_candidates(buffer, marker)
+    for _start, body, between_end_and_done in reversed(candidates):
+        if len(between_end_and_done) > 80:
+            continue
+        return body
+    return ""
+
+
+def extract_handoff_candidates(buffer: str, marker: str) -> list[tuple[int, str, str]]:
     candidates: list[tuple[int, str, str]] = []
     search_from = 0
     while search_from < len(buffer):
@@ -90,12 +105,7 @@ def extract_latest_valid_handoff(buffer: str, marker: str) -> str:
         body = buffer[body_start:end].strip()
         candidates.append((start, body, between_end_and_done))
         search_from = done + len(HANDOFF_DONE)
-
-    for _start, body, between_end_and_done in reversed(candidates):
-        if len(between_end_and_done) > 80:
-            continue
-        return body
-    return ""
+    return candidates
 
 
 def handoff_rejection_reason(body: str) -> str:
@@ -379,8 +389,9 @@ def _migrate_legacy_library(data: dict[str, Any]) -> tuple[dict[str, dict[str, s
             if not isinstance(item, dict) or not item.get("name"):
                 continue
             name = str(item["name"])
+            artifact_name, _warning = safe_artifact_name(str(item.get("artifact_name") or ""), name)
             roles[name] = {
-                "artifact_name": str(item.get("artifact_name") or f"{name}.md"),
+                "artifact_name": artifact_name,
                 "prompt": str(item.get("prompt") or ""),
             }
             order.append(name)
@@ -414,14 +425,25 @@ def load_library() -> tuple[dict[str, dict[str, Any]], dict[str, list[str]]]:
         presets["Default Pipeline"] = default_presets()["Default Pipeline"]
     for name in presets["Default Pipeline"]:
         roles.setdefault(name, default_role_library()[name])
+    for name, entry in list(roles.items()):
+        if not isinstance(entry, dict):
+            roles[name] = {"artifact_name": fallback_artifact_name(name), "prompt": ""}
+            continue
+        artifact_name, _warning = safe_artifact_name(str(entry.get("artifact_name") or ""), name)
+        entry["artifact_name"] = artifact_name
+        entry["prompt"] = str(entry.get("prompt") or "")
 
     return roles, presets
 
 
 def save_library(roles: dict[str, dict[str, Any]], presets: dict[str, list[str]]) -> None:
-    LIBRARY_FILE.write_text(
-        json.dumps({"roles": roles, "presets": presets}, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
+    safe_roles: dict[str, dict[str, Any]] = {}
+    for name, entry in roles.items():
+        safe_entry = dict(entry)
+        artifact_name, _warning = safe_artifact_name(str(safe_entry.get("artifact_name") or ""), name)
+        safe_entry["artifact_name"] = artifact_name
+        safe_roles[name] = safe_entry
+    atomic_write_json(LIBRARY_FILE, {"roles": safe_roles, "presets": presets})
 
 
 def optional_string_list(data: dict[str, Any], key: str) -> list[str] | None:
@@ -434,8 +456,9 @@ def optional_string_list(data: dict[str, Any], key: str) -> list[str] | None:
 
 
 def role_library_entry(role: AgentRole) -> dict[str, Any]:
+    artifact_name, _warning = safe_artifact_name(role.artifact_name, role.name)
     entry: dict[str, Any] = {
-        "artifact_name": role.artifact_name,
+        "artifact_name": artifact_name,
         "prompt": role.prompt,
     }
     if role.model.strip():
@@ -448,9 +471,10 @@ def role_library_entry(role: AgentRole) -> dict[str, Any]:
 
 
 def role_to_dict(role: AgentRole) -> dict[str, Any]:
+    artifact_name, _warning = safe_artifact_name(role.artifact_name, role.name)
     data = {
         "name": role.name,
-        "artifact_name": role.artifact_name,
+        "artifact_name": artifact_name,
         "prompt": role.prompt,
         "status": role.status,
         "session_id": role.session_id,
@@ -468,9 +492,10 @@ def role_from_dict(data: dict[str, Any]) -> AgentRole | None:
     name = str(data.get("name") or "").strip()
     if not name:
         return None
+    artifact_name, _warning = safe_artifact_name(str(data.get("artifact_name") or ""), name)
     return AgentRole(
         name=name,
-        artifact_name=str(data.get("artifact_name") or f"{name}.md"),
+        artifact_name=artifact_name,
         prompt=str(data.get("prompt") or ""),
         status=str(data.get("status") or "queued"),
         session_id=str(data.get("session_id") or ""),
@@ -557,16 +582,20 @@ def path_key(path: Path) -> str:
 
 
 def path_for_session_index(workspace: Path, path: Path) -> str:
-    try:
-        return str(path.resolve().relative_to(workspace.resolve()))
-    except (OSError, ValueError):
-        return str(path)
+    safe_path = contained_session_path(workspace, path)
+    if safe_path is None:
+        return ""
+    return str(safe_path.relative_to(workspace.resolve(strict=False)))
 
 
-def load_session_index(workspace: Path) -> list[Path]:
+def load_session_index(workspace: Path, warn: Callable[[str], None] | None = None) -> list[Path]:
     try:
         loaded = json.loads(session_index_file(workspace).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except json.JSONDecodeError as exc:
+        if warn:
+            warn(f"Session index is malformed and was ignored: {exc}")
+        loaded = {}
+    except OSError:
         loaded = {}
     if isinstance(loaded, dict):
         paths = loaded.get("sessions")
@@ -581,9 +610,11 @@ def load_session_index(workspace: Path) -> list[Path]:
         path_text = str(item or "").strip()
         if not path_text:
             continue
-        path = Path(path_text).expanduser()
-        if not path.is_absolute():
-            path = workspace / path
+        path = contained_session_path(workspace, Path(path_text))
+        if path is None:
+            if warn:
+                warn(f"Unsafe session index entry dropped: {path_text}")
+            continue
         key = path_key(path)
         if key in seen:
             continue
@@ -594,7 +625,10 @@ def load_session_index(workspace: Path) -> list[Path]:
         discovered = sorted(session_dir.glob(f"*{SESSION_FILE_SUFFIX}"), key=lambda item: item.stat().st_mtime, reverse=True)
     except OSError:
         discovered = []
-    for path in discovered:
+    for discovered_path in discovered:
+        path = contained_session_path(workspace, discovered_path)
+        if path is None:
+            continue
         key = path_key(path)
         if key not in seen:
             seen.add(key)
@@ -604,15 +638,91 @@ def load_session_index(workspace: Path) -> list[Path]:
 
 def save_session_index(workspace: Path, paths: list[Path]) -> None:
     index_file = session_index_file(workspace)
-    index_file.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"sessions": [path_for_session_index(workspace, path) for path in paths]}
-    index_file.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    safe_paths = [path_for_session_index(workspace, path) for path in paths]
+    payload = {"sessions": [path for path in safe_paths if path]}
+    atomic_write_json(index_file, payload)
 
 
 def session_slug(text: str) -> str:
     slug = "".join(ch.lower() if ch.isalnum() else "-" for ch in text.strip())
     slug = "-".join(part for part in slug.split("-") if part)
     return slug[:48] or "session"
+
+
+def bounded_command_output(output: str) -> tuple[str, bool]:
+    if len(output) <= MAX_COMMAND_OUTPUT_SAVE_CHARS:
+        return output, False
+    # Keep head and tail; errors and summaries usually appear at the end.
+    half = MAX_COMMAND_OUTPUT_SAVE_CHARS // 2
+    omitted = len(output) - half * 2
+    marker = f"\n...[{omitted:,} chars omitted by workbench output cap]...\n"
+    return output[:half] + marker + output[-half:], True
+
+
+def fallback_artifact_name(role_name: str) -> str:
+    return f"{session_slug(role_name)}.md"
+
+
+def validate_artifact_name(name: str) -> str:
+    candidate = str(name or "").strip()
+    win = PureWindowsPath(candidate)
+    if (
+        not candidate
+        or Path(candidate).is_absolute()
+        or win.is_absolute()
+        or win.drive
+        or win.root
+        or "/" in candidate
+        or "\\" in candidate
+    ):
+        raise ValueError("artifact name must be a relative file name")
+    parts = Path(candidate).parts
+    if len(parts) != 1 or any(part in {"", ".", ".."} for part in parts):
+        raise ValueError("artifact name must not contain traversal or path separators")
+    return candidate
+
+
+def safe_artifact_name(name: str, role_name: str) -> tuple[str, str | None]:
+    try:
+        return validate_artifact_name(name), None
+    except ValueError as exc:
+        fallback = fallback_artifact_name(role_name)
+        return fallback, f"Invalid artifact name for {role_name!r}: {name!r} ({exc}); using {fallback!r}."
+
+
+def atomic_write_json(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    text = json.dumps(payload, indent=2, ensure_ascii=False)
+    fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent))
+    temp_path = Path(temp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_path, path)
+    except Exception:
+        try:
+            temp_path.unlink()
+        except OSError:
+            pass
+        raise
+
+
+def contained_session_path(workspace: Path, path: Path) -> Path | None:
+    session_dir = session_dir_for_workspace(workspace)
+    candidate = path.expanduser()
+    if not candidate.is_absolute():
+        candidate = workspace / candidate
+    try:
+        resolved = candidate.resolve(strict=False)
+        resolved_dir = session_dir.resolve(strict=False)
+        resolved.relative_to(resolved_dir)
+    except (OSError, ValueError):
+        return None
+    if resolved.name == SESSION_INDEX_FILE_NAME or not resolved.name.endswith(SESSION_FILE_SUFFIX):
+        return None
+    return resolved
 
 
 MONO_FONT_FAMILY = "Consolas"
@@ -660,9 +770,9 @@ def mono_textedit(read_only: bool = True, wrap: bool = True) -> QtWidgets.QPlain
 
 
 class WorkbenchSignals(QtCore.QObject):
-    event_ready = QtCore.pyqtSignal(dict)
-    log_ready = QtCore.pyqtSignal(str, str)
-    done_ready = QtCore.pyqtSignal(int, str)
+    event_ready = QtCore.pyqtSignal(int, dict)
+    log_ready = QtCore.pyqtSignal(int, str, str)
+    done_ready = QtCore.pyqtSignal(int, int, str)
 
 
 SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
@@ -736,7 +846,11 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
         ]
         self.runner: Any = None
         self.active_role: AgentRole | None = None
+        self.active_run_id: int | None = None
+        self._next_run_id = 0
+        self.run_lifecycle = "idle"
         self.run_started_at = 0.0
+        self.last_run_error = ""
         self.session_file: Path | None = None
 
         self.conversation_lines: list[str] = []
@@ -761,7 +875,7 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
 
         self.signals = WorkbenchSignals()
         self.signals.event_ready.connect(self.handle_event)
-        self.signals.log_ready.connect(self.append_event)
+        self.signals.log_ready.connect(self.handle_runner_log)
         self.signals.done_ready.connect(self.finish_run)
 
         self.setWindowTitle("Multi-Agent Codex Workbench (PyQt)")
@@ -1313,6 +1427,17 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
     def current_workspace(self) -> Path:
         return workspace_path(self.state.cwd)
 
+    def is_run_active(self) -> bool:
+        return self.active_run_id is not None and self.run_lifecycle in {"launching", "running", "stopping"}
+
+    def reject_if_run_active(self, action: str) -> bool:
+        if not self.is_run_active():
+            return False
+        role_name = self.active_role.name if self.active_role else self.current_role().name
+        self.set_status(f"Cannot {action}; {role_name} is {self.run_lifecycle}.")
+        self.set_phase("Waiting", role_name, "Stop the active Codex run before starting another action.")
+        return True
+
     def default_session_path(self) -> Path:
         return session_dir_for_workspace(self.current_workspace()) / f"workbench-session{SESSION_FILE_SUFFIX}"
 
@@ -1332,10 +1457,10 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
             self.write_session_file(self.automatic_session_path(), announce=False)
 
     def register_session_path(self, path: Path) -> None:
-        try:
-            normalized = path.resolve()
-        except OSError:
-            normalized = path
+        normalized = contained_session_path(self.current_workspace(), path)
+        if normalized is None:
+            self.append_event(f"Session path rejected outside workspace session directory: {path}", "warning")
+            return
         existing = [item for item in self.saved_session_paths if str(item).lower() != str(normalized).lower()]
         self.saved_session_paths = [normalized, *existing]
         try:
@@ -1345,14 +1470,18 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
         self.refresh_session_list()
 
     def refresh_session_list(self) -> None:
-        indexed_paths = load_session_index(self.current_workspace())
+        indexed_paths = load_session_index(
+            self.current_workspace(),
+            warn=lambda message: self.append_event(message, "warning"),
+        )
         if self.saved_session_paths:
             indexed_keys = {path_key(path) for path in indexed_paths}
             indexed_paths.extend(path for path in self.saved_session_paths if path_key(path) not in indexed_keys)
         existing_paths: list[Path] = []
         for path in indexed_paths:
-            if path.exists():
-                existing_paths.append(path)
+            safe_path = contained_session_path(self.current_workspace(), path)
+            if safe_path and safe_path.exists():
+                existing_paths.append(safe_path)
         self.saved_session_paths = existing_paths
 
         if self.session_list is None:
@@ -1404,7 +1533,12 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
         if not path_text:
             self.set_status("Select a saved session to delete.")
             return
-        path = Path(str(path_text))
+        path = contained_session_path(self.current_workspace(), Path(str(path_text)))
+        if path is None:
+            self.set_status("Refusing to delete a session outside the workspace session directory.")
+            self.append_event(f"Unsafe session delete rejected: {path_text}", "warning")
+            self.refresh_session_list()
+            return
         confirm = QtWidgets.QMessageBox.question(
             self,
             "Delete Session",
@@ -1478,27 +1612,33 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
         self.write_session_file(path)
 
     def write_session_file(self, path: Path, announce: bool = True) -> None:
+        safe_path = contained_session_path(self.current_workspace(), path)
+        if safe_path is None:
+            message = f"Session path must stay under {session_dir_for_workspace(self.current_workspace())}"
+            if announce:
+                QtWidgets.QMessageBox.warning(self, "Save Session", message)
+            self.set_status(message)
+            self.append_event(f"Unsafe session save rejected: {path}", "warning")
+            return
         try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(self.session_payload(), indent=2, ensure_ascii=False), encoding="utf-8")
+            atomic_write_json(safe_path, self.session_payload())
         except OSError as exc:
             if announce:
                 QtWidgets.QMessageBox.critical(self, "Save Session", f"Could not save session:\n{exc}")
             self.set_status(f"Could not save session: {exc}")
             return
-        self.session_file = path
-        self.register_session_path(path)
+        self.session_file = safe_path
+        self.register_session_path(safe_path)
         if announce:
-            self.set_status(f"Saved session: {path}")
-            self.append_event(f"Session saved: {path}")
+            self.set_status(f"Saved session: {safe_path}")
+            self.append_event(f"Session saved: {safe_path}")
 
     def auto_save_session(self) -> None:
         if self.session_file is not None:
             self.write_session_file(self.session_file, announce=False)
 
     def load_session(self) -> None:
-        if self.runner and self.runner.process and self.runner.process.poll() is None:
-            self.set_status("Stop the running agent before loading a session.")
+        if self.reject_if_run_active("load a session"):
             return
 
         start_path = str(self.session_file or self.default_session_path())
@@ -1513,11 +1653,15 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
         self.load_session_file(Path(path))
 
     def load_session_file(self, path: Path) -> None:
-        if self.runner and self.runner.process and self.runner.process.poll() is None:
-            self.set_status("Stop the running agent before loading a session.")
+        if self.reject_if_run_active("load a session"):
+            return
+        safe_path = contained_session_path(self.current_workspace(), path)
+        if safe_path is None:
+            self.set_status("Refusing to load a session outside the workspace session directory.")
+            self.append_event(f"Unsafe session load rejected: {path}", "warning")
             return
         try:
-            loaded = json.loads(path.read_text(encoding="utf-8"))
+            loaded = json.loads(safe_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             QtWidgets.QMessageBox.critical(self, "Load Session", f"Could not load session:\n{exc}")
             self.set_status(f"Could not load session: {exc}")
@@ -1548,8 +1692,10 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
         self.pending_relay_message = str(loaded.get("pending_relay_message") or "")
         self.active_role = None
         self.run_started_at = 0.0
-        self.session_file = path
-        self.register_session_path(path)
+        self.active_run_id = None
+        self.run_lifecycle = "idle"
+        self.session_file = safe_path
+        self.register_session_path(safe_path)
 
         self.sync_controls_from_state()
         self._rebuild_role_status_buttons()
@@ -1557,7 +1703,7 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
         self.set_phase(str(loaded.get("phase") or "Idle"), None, str(loaded.get("phase_detail") or "Session loaded."))
         self.refresh_all_outputs()
         self.refresh_artifacts()
-        self.set_status(f"Loaded session: {path}")
+        self.set_status(f"Loaded session: {safe_path}")
 
     @staticmethod
     def _string_list(value: Any) -> list[str]:
@@ -1617,6 +1763,8 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
     # ----------------------------------------------------------- workflow
 
     def start_workflow(self) -> None:
+        if self.reject_if_run_active("start a workflow"):
+            return
         self.clear_outputs()
         for role in self.roles:
             role.status = "queued"
@@ -1637,16 +1785,25 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
             self.set_status(f"Workspace folder does not exist: {cwd}")
             return
 
-        if self.runner and self.runner.process and self.runner.process.poll() is None:
-            self.set_status("An agent is already running. Stop it before starting another.")
-            self.set_phase("Waiting", role.name, "Another Codex process is still shutting down.")
+        if self.reject_if_run_active("start another agent"):
             return
+
+        safe_artifact, warning = safe_artifact_name(role.artifact_name, role.name)
+        if warning:
+            role.artifact_name = safe_artifact
+            self.append_event(warning, "warning")
+            self._sync_role_editor()
 
         self.ensure_session_file()
         self.artifacts_dir().mkdir(exist_ok=True)
+        self._next_run_id += 1
+        run_id = self._next_run_id
+        self.active_run_id = run_id
+        self.run_lifecycle = "launching"
         role.status = "running"
         self.active_role = role
         self.run_started_at = time.time()
+        self.last_run_error = ""
         self.set_phase("Starting", role.name, "Launching Codex process.")
         if self.pending_relay_message:
             self.append_conversation("Relay", self.pending_relay_message)
@@ -1674,31 +1831,38 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
         )
         self.runner = CodexExecRunner(
             run_state,
-            on_event=lambda event: self.signals.event_ready.emit(event),
-            on_log=lambda summary: self.signals.log_ready.emit(summary.text, summary.level),
-            on_done=lambda code, stderr: self.signals.done_ready.emit(code, stderr),
+            on_event=lambda event, run_id=run_id: self.signals.event_ready.emit(run_id, event),
+            on_log=lambda summary, run_id=run_id: self.signals.log_ready.emit(run_id, summary.text, summary.level),
+            on_done=lambda code, stderr, run_id=run_id: self.signals.done_ready.emit(run_id, code, stderr),
         )
         self.runner.start()
 
     def stop_run(self) -> None:
-        if not self.runner:
+        if not self.is_run_active() and not self.runner:
             self.set_status("No agent process is running.")
             return
-        self.runner.stop()
+        self.run_lifecycle = "stopping"
+        if self.runner:
+            self.runner.stop()
         self.set_status("Stopping agent...")
         self.set_phase("Stopping", None, "Stopping active Codex process.")
 
     def stop_all_agents(self) -> None:
         if self.runner:
+            self.run_lifecycle = "stopping"
             self.runner.stop()
 
-    @QtCore.pyqtSlot(int, str)
-    def finish_run(self, returncode: int, stderr: str) -> None:
+    @QtCore.pyqtSlot(int, int, str)
+    def finish_run(self, run_id: int, returncode: int, stderr: str) -> None:
+        if run_id != self.active_run_id:
+            return
         role = self.active_role or self.current_role()
         elapsed = time.time() - self.run_started_at if self.run_started_at else 0.0
         stderr = stderr.strip()
         self.refresh_artifacts()
-        self.clear_finished_runner()
+        self.clear_finished_runner(force=True)
+        self.active_run_id = None
+        self.run_lifecycle = "idle"
 
         if returncode == 0:
             role.status = "complete"
@@ -1734,7 +1898,13 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
                         "Use Normal local shell mode for a normal-terminal style run."
                     )
                 self.append_activity("[stderr]\n" + stderr)
-            first_line = stderr.splitlines()[0] if stderr else "no stderr output"
+            if stderr:
+                first_line = stderr.splitlines()[0]
+            elif self.last_run_error:
+                first_line = self.last_run_error
+            else:
+                first_line = "no stderr output"
+            self.append_activity(f"[{role.name.lower()} blocked] exit={returncode}: {first_line}")
             self.append_event(f"{role.name} exited with code {returncode}: {first_line}", "error")
             self.set_status(f"{role.name} exited with code {returncode} after {elapsed:.1f}s.")
             self.set_phase("Blocked", role.name, first_line)
@@ -1742,8 +1912,12 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
         self.refresh_all_outputs()
         self.auto_save_session()
 
-    @QtCore.pyqtSlot(dict)
-    def handle_event(self, event: dict[str, Any]) -> None:
+    @QtCore.pyqtSlot(int, dict)
+    def handle_event(self, run_id: int, event: dict[str, Any]) -> None:
+        if run_id != self.active_run_id:
+            return
+        if self.run_lifecycle == "launching":
+            self.run_lifecycle = "running"
         role_name = self.active_role.name if self.active_role else self.current_role().name
         event_type = str(event.get("type", "unknown"))
         self.raw_lines.append(json.dumps({"role": role_name, **event}, ensure_ascii=False))
@@ -1778,8 +1952,11 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
                 self.set_phase("Finalizing", role_name, "Codex turn completed.")
             return
         if event_type in {"turn.failed", "thread.error", "error"}:
+            detail = self.extract_error_detail(event) or self.compact_json(event)
+            self.last_run_error = detail
+            self.append_activity(f"[{role_name.lower()} {event_type}] {detail}")
             self.append_event(f"{role_name}: {event_type}: {self.compact_json(event)}", "error")
-            self.set_phase("Error", role_name, event_type)
+            self.set_phase("Error", role_name, detail)
             return
         if event_type.startswith("item."):
             self.handle_item_event(role_name, event_type, event)
@@ -1852,6 +2029,10 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
         self.append_event(f"{role_name}: {event_type}: {item_type}")
 
     def build_agent_prompt(self, role: AgentRole, relay_message: str = "") -> str:
+        artifact_name, warning = safe_artifact_name(role.artifact_name, role.name)
+        if warning:
+            role.artifact_name = artifact_name
+            self.append_event(warning, "warning")
         artifacts = self.read_artifact_context()
         handoff_rules = self.handoff_instructions(role)
         relay_block = ""
@@ -1864,7 +2045,7 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
             f"Your role instruction:\n{role.prompt.strip()}\n\n"
             "Use the workspace as the source of truth. Store handoff markdown in the artifacts folder.\n"
             "Read any needed artifact files directly from disk; artifact contents are not pasted here.\n"
-            f"Expected artifact: artifacts/{role.artifact_name}\n\n"
+            f"Expected artifact: artifacts/{artifact_name}\n\n"
             f"{handoff_rules}\n\n"
             f"Existing artifacts:\n{artifacts if artifacts else '(none yet)'}\n"
         )
@@ -1907,7 +2088,7 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
 
     def launch_queued_relay(self, attempt: int = 0) -> None:
         self.clear_finished_runner()
-        if self.runner and self.runner.process and self.runner.process.poll() is None:
+        if self.is_run_active():
             if attempt >= 20:
                 self.set_status("Relay is still waiting for the previous agent to exit.")
                 self.set_phase("Relay Waiting", self.current_role().name, "Previous Codex process has not exited.")
@@ -1920,8 +2101,14 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
         self.append_event(f"Launching relayed agent: {self.current_role().name}")
         self.start_current_role()
 
-    def clear_finished_runner(self) -> None:
-        if self.runner and self.runner.process and self.runner.process.poll() is not None:
+    @QtCore.pyqtSlot(int, str, str)
+    def handle_runner_log(self, run_id: int, text: str, level: str) -> None:
+        if run_id != self.active_run_id:
+            return
+        self.append_event(text, level)
+
+    def clear_finished_runner(self, force: bool = False) -> None:
+        if force or (self.runner and self.runner.process and self.runner.process.poll() is not None):
             self.runner = None
 
     def relay_pending_handoff(self) -> None:
@@ -1929,7 +2116,7 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
             self.set_status("No pending handoff to relay.")
             return
 
-        if self.runner and self.runner.process and self.runner.process.poll() is None:
+        if self.is_run_active():
             self.set_status("Current agent is still running; pending handoff will relay when it exits.")
             return
 
@@ -1969,15 +2156,20 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
         self.set_phase("Handoff Detected", role_name, f"Target: {handoff.target_role}.")
 
     def extract_best_handoff(self, source_role: str, buffer: str) -> Handoff | None:
-        candidates: list[Handoff] = []
+        candidates: list[tuple[int, Handoff]] = []
         source = self.role_by_name(source_role)
         targets = self.allowed_handoff_targets(source) if source else [target for target in self.roles if target.name != source_role]
         for target in targets:
             marker = handoff_marker(target.name)
-            body = self.extract_latest_valid_handoff(buffer, marker)
-            if body and self.validate_handoff_body(source_role, marker, body):
-                candidates.append(Handoff(source_role, target.name, marker, body))
-        return candidates[-1] if candidates else None
+            for start, body, between_end_and_done in extract_handoff_candidates(buffer, marker):
+                if len(between_end_and_done) > 80:
+                    continue
+                if body and self.validate_handoff_body(source_role, marker, body):
+                    candidates.append((start, Handoff(source_role, target.name, marker, body)))
+        if not candidates:
+            return None
+        candidates.sort(key=lambda item: item[0])
+        return candidates[-1][1]
 
     def extract_latest_valid_handoff(self, buffer: str, marker: str) -> str:
         return extract_latest_valid_handoff(buffer, marker)
@@ -2013,6 +2205,17 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
         return f"{handoff.source_role}|{handoff.marker}|{body}"
 
     @staticmethod
+    def extract_error_detail(event: dict[str, Any]) -> str:
+        error = event.get("error")
+        if isinstance(error, dict):
+            message = str(error.get("message") or "").strip()
+            if message:
+                return message
+        elif isinstance(error, str) and error.strip():
+            return error.strip()
+        return str(event.get("message") or "").strip()
+
+    @staticmethod
     def command_failed(status: str, exit_code: Any) -> bool:
         normalized = status.lower()
         if normalized in {"failed", "failure", "error", "errored", "cancelled"}:
@@ -2031,8 +2234,12 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
         parts = []
         artifact_dir = self.artifacts_dir()
         for role in self.roles:
-            path = artifact_dir / role.artifact_name
-            artifact_ref = f"artifacts/{role.artifact_name}"
+            artifact_name, warning = safe_artifact_name(role.artifact_name, role.name)
+            if warning:
+                role.artifact_name = artifact_name
+                self.append_event(warning, "warning")
+            path = artifact_dir / artifact_name
+            artifact_ref = f"artifacts/{artifact_name}"
             if not path.exists():
                 parts.append(f"missing  {artifact_ref}")
                 continue
@@ -2048,6 +2255,8 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
         if len(output) <= MAX_INLINE_ACTIVITY_OUTPUT_CHARS:
             self.append_activity(output)
             return
+        preview = output[:INLINE_ACTIVITY_OUTPUT_PREVIEW_CHARS].rstrip()
+        saved, truncated_save = bounded_command_output(output)
         try:
             output_dir = self.artifacts_dir() / ".workbench-command-output"
             output_dir.mkdir(parents=True, exist_ok=True)
@@ -2058,13 +2267,56 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
             while path.exists():
                 path = output_dir / f"{timestamp}-{slug}-{suffix}.txt"
                 suffix += 1
-            path.write_text(output, encoding="utf-8", errors="replace")
+            path.write_text(saved, encoding="utf-8", errors="replace")
+            try:
+                os.chmod(path, 0o600)
+            except OSError:
+                pass
+            self.prune_command_output_files(output_dir)
         except OSError as exc:
-            self.append_activity(f"[{role_name.lower()} output save failed] {exc}")
-            self.append_activity(output)
+            self.append_activity(preview)
+            self.append_activity(
+                f"[{role_name.lower()} output save failed] {exc}; showing first "
+                f"{len(preview):,} of {len(output):,} chars only."
+            )
             return
         relative = path.relative_to(self.current_workspace())
-        self.append_activity(f"[{role_name.lower()} output saved] {relative} ({len(output):,} chars)")
+        self.append_activity(preview)
+        if truncated_save:
+            saved_note = f"head and tail ({len(saved):,} chars)"
+        else:
+            saved_note = f"all {len(saved):,} chars"
+        self.append_activity(
+            f"[{role_name.lower()} output truncated] showing first "
+            f"{INLINE_ACTIVITY_OUTPUT_PREVIEW_CHARS:,} of {len(output):,} chars; "
+            f"{saved_note} saved to {relative}; keeping newest {MAX_COMMAND_OUTPUT_FILES} output files"
+        )
+
+    @staticmethod
+    def prune_command_output_files(output_dir: Path) -> None:
+        try:
+            files = sorted(
+                [path for path in output_dir.glob("*.txt") if path.is_file()],
+                key=lambda path: path.stat().st_mtime,
+                reverse=True,
+            )
+        except OSError:
+            return
+        total_bytes = 0
+        kept = 0
+        for path in files:
+            try:
+                size = path.stat().st_size
+            except OSError:
+                size = 0
+            kept += 1
+            total_bytes += size
+            if kept <= MAX_COMMAND_OUTPUT_FILES and total_bytes <= MAX_COMMAND_OUTPUT_TOTAL_BYTES:
+                continue
+            try:
+                path.unlink()
+            except OSError:
+                pass
 
     def refresh_artifacts(self) -> None:
         artifact_dir = self.artifacts_dir()
@@ -2405,7 +2657,14 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
         self.refresh_all_outputs()
 
     def on_role_artifact_changed(self, value: str) -> None:
-        self.current_role().artifact_name = value
+        role = self.current_role()
+        artifact_name, warning = safe_artifact_name(value, role.name)
+        role.artifact_name = artifact_name
+        if warning:
+            self.append_event(warning, "warning")
+            self.role_artifact_input.blockSignals(True)
+            self.role_artifact_input.setText(artifact_name)
+            self.role_artifact_input.blockSignals(False)
         self.refresh_all_outputs()
 
     def on_role_model_changed(self, value: str) -> None:
@@ -2447,8 +2706,7 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
         if order is None:
             self.set_status(f"Preset '{name}' not found.")
             return
-        if self.runner and self.runner.process and self.runner.process.poll() is None:
-            self.set_status("Stop the running agent before switching presets.")
+        if self.reject_if_run_active("switch presets"):
             return
 
         missing = [role_name for role_name in order if role_name not in self.role_library]
@@ -2519,8 +2777,7 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
         self.set_status(f"Deleted preset '{name}'.")
 
     def new_workflow(self) -> None:
-        if self.runner and self.runner.process and self.runner.process.poll() is None:
-            self.set_status("Stop the running agent before starting a new workflow.")
+        if self.reject_if_run_active("start a new workflow"):
             return
         self.session_file = None
         self.refresh_session_list()

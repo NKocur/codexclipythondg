@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import shlex
 import shutil
 import subprocess
@@ -108,6 +109,14 @@ class CodexEventSummary:
     level: str = "info"
 
 
+@dataclass(frozen=True)
+class TerminationResult:
+    attempted: bool
+    returncode: int | None
+    still_running: bool
+    message: str = ""
+
+
 class CodexExecRunner:
     def __init__(
         self,
@@ -123,6 +132,7 @@ class CodexExecRunner:
         self.process: subprocess.Popen[str] | None = None
         self._job_handle: int | None = None
         self._stop_requested = threading.Event()
+        self._process_lock = threading.Lock()
 
     def start(self) -> None:
         thread = threading.Thread(target=self._run, daemon=True)
@@ -130,9 +140,10 @@ class CodexExecRunner:
 
     def stop(self) -> None:
         self._stop_requested.set()
-        process = self.process
-        if process and process.poll() is None:
-            process.terminate()
+        with self._process_lock:
+            process = self.process
+        result = self._terminate_process(process, graceful_timeout=2.0)
+        self._log_cleanup_result(result)
 
     def _run(self) -> None:
         cmd = self._build_command()
@@ -143,7 +154,7 @@ class CodexExecRunner:
 
         try:
             self.on_log(CodexEventSummary("Starting: " + subprocess.list2cmdline(cmd)))
-            self.process = subprocess.Popen(
+            process = subprocess.Popen(
                 cmd,
                 cwd=cwd,
                 stdin=subprocess.PIPE,
@@ -153,26 +164,29 @@ class CodexExecRunner:
                 encoding="utf-8",
                 errors="replace",
                 bufsize=1,
+                start_new_session=sys.platform != "win32",
             )
+            with self._process_lock:
+                self.process = process
             self._attach_process_lifetime_job()
 
-            assert self.process.stderr is not None
+            assert process.stderr is not None
             stderr_thread = threading.Thread(
                 target=self._drain_stderr,
-                args=(self.process.stderr, stderr_lines),
+                args=(process.stderr, stderr_lines),
                 daemon=True,
             )
             stderr_thread.start()
 
-            assert self.process.stdin is not None
+            assert process.stdin is not None
             prompt = self.state.prompt
             if not prompt.endswith("\n"):
                 prompt += "\n"
-            self.process.stdin.write(prompt)
-            self.process.stdin.close()
+            process.stdin.write(prompt)
+            process.stdin.close()
 
-            assert self.process.stdout is not None
-            for line in self.process.stdout:
+            assert process.stdout is not None
+            for line in process.stdout:
                 if self._stop_requested.is_set():
                     break
                 line = line.strip()
@@ -185,16 +199,14 @@ class CodexExecRunner:
                     continue
                 self.on_event(event)
 
-            if self._stop_requested.is_set() and self.process.poll() is None:
-                self.process.terminate()
-                try:
-                    self.process.wait(timeout=2)
-                except subprocess.TimeoutExpired:
-                    self.process.kill()
-
-            returncode = self.process.wait()
-            if stderr_thread:
-                stderr_thread.join(timeout=1)
+            if self._stop_requested.is_set():
+                result = self._terminate_process(process, graceful_timeout=2.0)
+                self._record_cleanup_result(result, stderr_lines)
+                returncode = result.returncode
+                if result.still_running or returncode is None:
+                    returncode = 1
+            else:
+                returncode = process.wait()
         except FileNotFoundError:
             stderr_lines.append(
                 f"Could not find Codex command: {self.state.codex_cmd!r}. "
@@ -203,13 +215,93 @@ class CodexExecRunner:
         except Exception as exc:
             stderr_lines.append(str(exc))
         finally:
+            process = self.process
+            if process and process.poll() is None:
+                result = self._terminate_process(process, graceful_timeout=2.0)
+                self._record_cleanup_result(result, stderr_lines)
+                if result.returncode is not None:
+                    returncode = result.returncode
+                if result.still_running:
+                    returncode = 1
+            if stderr_thread:
+                stderr_thread.join(timeout=2)
             self._close_job_handle()
             self.on_done(returncode, "".join(stderr_lines))
 
     @staticmethod
     def _drain_stderr(stream: Any, stderr_lines: list[str]) -> None:
-        for line in stream:
-            stderr_lines.append(line)
+        try:
+            for line in stream:
+                stderr_lines.append(line)
+        except Exception as exc:
+            stderr_lines.append(f"stderr drain failed: {exc}\n")
+
+    def _record_cleanup_result(self, result: TerminationResult, stderr_lines: list[str]) -> None:
+        self._log_cleanup_result(result)
+        if result.message:
+            stderr_lines.append(f"Process cleanup warning: {result.message}\n")
+
+    def _log_cleanup_result(self, result: TerminationResult) -> None:
+        if result.message:
+            self.on_log(CodexEventSummary(f"Process cleanup warning: {result.message}", "warning"))
+
+    @staticmethod
+    def _terminate_process(
+        process: subprocess.Popen[str] | None,
+        graceful_timeout: float = 2.0,
+    ) -> TerminationResult:
+        if process is None:
+            return TerminationResult(False, None, False)
+        polled = process.poll()
+        if polled is not None:
+            return TerminationResult(False, polled, False)
+        messages: list[str] = []
+        try:
+            if sys.platform != "win32":
+                os.killpg(process.pid, signal.SIGTERM)
+            else:
+                process.terminate()
+            returncode = process.wait(timeout=graceful_timeout)
+            return TerminationResult(True, returncode, False)
+        except subprocess.TimeoutExpired:
+            messages.append("graceful termination timed out; trying forced kill")
+        except OSError as exc:
+            messages.append(f"graceful termination failed: {exc}; trying forced kill")
+        polled = process.poll()
+        if polled is not None:
+            return TerminationResult(True, polled, False, "; ".join(messages))
+        try:
+            if sys.platform != "win32":
+                os.killpg(process.pid, signal.SIGKILL)
+            else:
+                process.kill()
+            returncode = process.wait(timeout=graceful_timeout)
+            return TerminationResult(True, returncode, False, "; ".join(messages))
+        except subprocess.TimeoutExpired:
+            polled = process.poll()
+            return TerminationResult(
+                True,
+                polled,
+                polled is None,
+                "; ".join([*messages, "forced kill timed out; process may still be running"]),
+            )
+        except OSError as exc:
+            polled = process.poll()
+            return TerminationResult(
+                True,
+                polled,
+                polled is None,
+                "; ".join([*messages, f"forced kill failed: {exc}; process may still be running"]),
+            )
+        polled = process.poll()
+        if polled is None:
+            return TerminationResult(
+                True,
+                None,
+                True,
+                "; ".join([*messages, "forced kill did not stop process; process may still be running"]),
+            )
+        return TerminationResult(True, polled, False, "; ".join(messages))
 
     def _build_command(self) -> list[str]:
         codex_cmd = self.state.codex_cmd.strip() or resolve_codex_command()
@@ -264,6 +356,7 @@ class CodexExecRunner:
 
         job = _kernel32.CreateJobObjectW(None, None)
         if not job:
+            self.on_log(CodexEventSummary("Could not create Windows process cleanup job.", "warning"))
             return
 
         info = _JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
@@ -276,10 +369,12 @@ class CodexExecRunner:
         )
         if not ok:
             _kernel32.CloseHandle(job)
+            self.on_log(CodexEventSummary("Could not configure Windows process cleanup job.", "warning"))
             return
 
         if not _kernel32.AssignProcessToJobObject(job, self.process._handle):
             _kernel32.CloseHandle(job)
+            self.on_log(CodexEventSummary("Could not attach Codex process to Windows cleanup job.", "warning"))
             return
 
         self._job_handle = job

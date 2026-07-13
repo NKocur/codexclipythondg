@@ -72,6 +72,22 @@
       "artifact_name": "MAINTAINABILITY_REVIEW.md",
       "prompt": "Read artifacts/IMPLEMENTATION_NOTES.md and inspect the actual diff/repo (not just the other agents' summaries). Audit the change for the architectural failure patterns that make LLM-generated code hard to maintain, even when it passes tests. For each pattern, actively look for it in the real files touched; do not just restate the Implementer's own description.\n\nFailure patterns to check:\n1. Duplication instead of reuse - reimplemented validation, formatting, parsing, API wrappers, or components that already exist elsewhere in the repo.\n2. God files / multi-responsibility functions - large files or functions mixing validation, persistence, logging, formatting, and UI/state in one place; growing conditional branches per feature.\n3. Modular mirage - code that looks modular (services/managers/adapters/providers) but isn't: layers that import backward, interfaces with only one implementation, pass-through services, manager classes that do everything.\n4. Code in the wrong layer - business rules in UI, DB calls in route handlers instead of repositories/services, domain objects doing formatting, dependency direction violations.\n5. Shallow or cargo-culted abstractions - new classes/wrappers (e.g. XManager, DataProcessor, ConfigHandler) that don't isolate change, hide complexity, reduce coupling, or clarify ownership.\n6. Happy-path logic and swallowed errors - bare except/catch blocks, exceptions logged and discarded, error handling that masks the actual failure cause.\n7. Version/dependency confusion - unnecessary new dependencies, deprecated APIs, mixed library-version patterns, assumptions that don't match the repo's actual lockfile/manifest/framework version.\n8. Weak tests - tests that only cover the happy path, assert implementation details or exact internal call order, or would pass against almost any implementation rather than the intended behavior/contract.\n\nAlso answer the reuse-audit questions directly: Did it reuse the existing domain model? Did it duplicate validation/formatting/parsing/API access? Is the code in the right layer? Does each new abstraction earn its existence? Was dependency direction preserved? Did it delete obsolete code, or only add more? Could a future developer understand why this change exists without asking the AI?\n\nWrite artifacts/MAINTAINABILITY_REVIEW.md with: a findings list (pattern, file/location, description, severity: blocking/major/minor, concrete recommended fix), direct answers to the reuse-audit questions above, and an overall maintainability verdict (clean / needs follow-up refactor / blocking) with a short rationale. If you find nothing significant, say so explicitly rather than leaving the report empty."
     },
+    "Bug Investigator": {
+      "artifact_name": "DIAGNOSIS.md",
+      "prompt": "From the user's problem description, investigate the failure. Reproduce it if possible (run the failing command, test, or scenario), read the relevant code, and trace the root cause rather than the surface symptom. Do not fix anything yet. Write artifacts/DIAGNOSIS.md with: the observed problem, reproduction steps, the root cause with file/line evidence, other places the same defect pattern may exist, and a proposed fix approach."
+    },
+    "Bug Fixer": {
+      "artifact_name": "FIX_NOTES.md",
+      "prompt": "Read artifacts/DIAGNOSIS.md. Fix the root cause with the smallest change that actually resolves it - do not paper over symptoms, silence errors, or add workarounds that leave the underlying defect in place. Fix any other occurrences of the same defect identified in the diagnosis. Write artifacts/FIX_NOTES.md with what was changed and why, how the fix addresses the root cause, and anything intentionally left alone."
+    },
+    "Fix Verifier": {
+      "artifact_name": "FIX_VERIFICATION.md",
+      "prompt": "Read artifacts/DIAGNOSIS.md and artifacts/FIX_NOTES.md. Re-run the original reproduction to confirm the problem is gone, then run the relevant test suite to check for regressions. If no test covered this bug, add one that fails without the fix and passes with it. Write artifacts/FIX_VERIFICATION.md with commands run, results, the new/updated tests, and any remaining failures."
+    },
+    "Fix Reviewer": {
+      "artifact_name": "FIX_REVIEW.md",
+      "prompt": "Read all prior artifacts and the actual diff. Verify the fix addresses the root cause from the diagnosis rather than masking symptoms, check for side effects or regressions the change could introduce elsewhere, and confirm the verification was adequate. Write artifacts/FIX_REVIEW.md with findings, risks, and an approval status."
+    },
     "Audit Scoper": {
       "artifact_name": "AUDIT_SCOPE.md",
       "prompt": "Read the user's audit request and inspect the workspace enough to identify the relevant files, modules, tests, and recent changes to review. Do not modify files, do not apply patches, and do not run formatters or generators. Write artifacts/AUDIT_SCOPE.md with: the audit objective, in-scope files/areas, out-of-scope areas, commands or read-only inspections performed, assumptions, and specific questions the remaining audit should answer."
@@ -111,6 +127,12 @@
       "Test Writer",
       "Maintainability Reviewer",
       "Code Reviewer"
+    ],
+    "Bug Fix": [
+      "Bug Investigator",
+      "Bug Fixer",
+      "Fix Verifier",
+      "Fix Reviewer"
     ],
     "Code Audit Only": [
       "Audit Scoper",
