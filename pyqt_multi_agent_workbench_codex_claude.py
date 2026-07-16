@@ -35,6 +35,7 @@ INLINE_ACTIVITY_OUTPUT_PREVIEW_CHARS = 2000
 MAX_COMMAND_OUTPUT_SAVE_CHARS = 200_000
 MAX_COMMAND_OUTPUT_FILES = 50
 MAX_COMMAND_OUTPUT_TOTAL_BYTES = 50_000_000
+MAX_ACTIVITY_COMMAND_CHARS = 500
 HANDOFF_MIN_LENGTH = 20
 HANDOFF_MAX_LENGTH = 6000
 HANDOFF_END = "[[END_HANDOFF]]"
@@ -1184,6 +1185,8 @@ def mono_textedit(read_only: bool = True, wrap: bool = True) -> QtWidgets.QPlain
         if wrap
         else QtWidgets.QPlainTextEdit.LineWrapMode.NoWrap
     )
+    widget.setSizeAdjustPolicy(QtWidgets.QAbstractScrollArea.SizeAdjustPolicy.AdjustIgnored)
+    widget.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored, QtWidgets.QSizePolicy.Policy.Expanding)
     return widget
 
 
@@ -1599,12 +1602,14 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
         layout.addWidget(self._build_command_center())
         layout.addWidget(self._build_execution_settings_box())
 
-        splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
-        splitter.addWidget(self._build_conversation_panel())
-        splitter.addWidget(self._build_tabs())
-        splitter.setStretchFactor(0, 3)
-        splitter.setStretchFactor(1, 2)
-        layout.addWidget(splitter, 1)
+        self.main_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
+        self.main_splitter.setChildrenCollapsible(False)
+        self.main_splitter.addWidget(self._build_conversation_panel())
+        self.main_splitter.addWidget(self._build_tabs())
+        self.main_splitter.setStretchFactor(0, 3)
+        self.main_splitter.setStretchFactor(1, 2)
+        self.main_splitter.setSizes([620, 440])
+        layout.addWidget(self.main_splitter, 1)
 
         return container
 
@@ -2607,18 +2612,19 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
 
         if item_type == "command_execution":
             command = item.get("command") or item.get("cmd") or item.get("display_command") or "command"
+            command_display = self.command_activity_preview(str(command))
             exit_code = item.get("exit_code")
             if is_start_event:
-                self.set_phase("Working", role_name, str(command))
+                self.set_phase("Working", role_name, command_display)
                 self.append_event(f"{role_name}: command started")
                 return
-            self.append_activity(f"[{role_name.lower()} {status} exit={exit_code}] {command}")
-            self.set_phase("Working", role_name, str(command))
+            self.append_activity(f"[{role_name.lower()} {status} exit={exit_code}] {command_display}")
+            self.set_phase("Working", role_name, command_display)
             output = item.get("aggregated_output") or item.get("output") or item.get("stdout")
             if output:
                 self.append_command_output(role_name, str(output).rstrip())
             if self.command_failed(status, exit_code):
-                self.record_item_warning(role_name, f"command {status} exit={exit_code}: {command}")
+                self.record_item_warning(role_name, f"command {status} exit={exit_code}: {command_display}")
             self.append_event(f"{role_name}: command_execution {status}")
             return
 
@@ -2948,6 +2954,14 @@ class MultiAgentCodexWindow(QtWidgets.QMainWindow):
             f"{INLINE_ACTIVITY_OUTPUT_PREVIEW_CHARS:,} of {len(output):,} chars; "
             f"{saved_note} saved to {relative}; keeping newest {MAX_COMMAND_OUTPUT_FILES} output files"
         )
+
+    @staticmethod
+    def command_activity_preview(command: str) -> str:
+        """Keep Activity narrow; complete command payloads remain in Raw JSONL."""
+        compact = " ".join(command.split())
+        if len(compact) <= MAX_ACTIVITY_COMMAND_CHARS:
+            return compact
+        return compact[:MAX_ACTIVITY_COMMAND_CHARS - 3].rstrip() + "..."
 
     @staticmethod
     def prune_command_output_files(output_dir: Path) -> None:
