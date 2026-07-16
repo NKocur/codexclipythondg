@@ -148,6 +148,7 @@ class CodexExecRunner:
         stderr_lines: list[str] = []
         stderr_thread: threading.Thread | None = None
         returncode = 1
+        terminal_event: str | None = None
 
         try:
             self.on_log(CodexEventSummary("Starting: " + subprocess.list2cmdline(cmd)))
@@ -196,11 +197,28 @@ class CodexExecRunner:
                     continue
                 self.on_event(event)
 
+                # Codex has completed the turn once it emits one of these events.
+                # Do not wait indefinitely for EOF: an MCP child can inherit stdout
+                # and keep the pipe open after the CLI has already finalized.
+                event_type = str(event.get("type") or "")
+                if event_type in {"turn.completed", "turn.failed"}:
+                    terminal_event = event_type
+                    break
+
             if self._stop_requested.is_set():
                 result = self._terminate_process(process, graceful_timeout=2.0)
                 self._record_cleanup_result(result, stderr_lines)
                 returncode = result.returncode
                 if result.still_running or returncode is None:
+                    returncode = 1
+            elif terminal_event:
+                result = self._terminate_process(process, graceful_timeout=1.0)
+                self._record_cleanup_result(result, stderr_lines)
+                if terminal_event == "turn.completed":
+                    # The completed event is authoritative. The cleanup exit code is
+                    # commonly nonzero because it terminates a lingering CLI wrapper.
+                    returncode = 0
+                else:
                     returncode = 1
             else:
                 returncode = process.wait()
