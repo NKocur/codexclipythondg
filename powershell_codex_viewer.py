@@ -13,9 +13,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-import dragongui as dg
-
-
 MAX_LOG_LINES = 600
 MAX_RAW_LINES = 300
 
@@ -836,4 +833,6 @@ class CodexExecGui:
 
 
 if __name__ == "__main__":
+    import dragongui as dg
+
     CodexExecGui().run()
