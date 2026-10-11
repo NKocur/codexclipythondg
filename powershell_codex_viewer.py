@@ -240,6 +240,14 @@ class CodexExecRunner:
                     returncode = 1
             if stderr_thread:
                 stderr_thread.join(timeout=2)
+            # Release pipe handles after each headless run. Repeated web runs keep
+            # this process alive, unlike a short-lived command-line invocation.
+            if process:
+                for stream in (process.stdin, process.stdout):
+                    if stream and not stream.closed:
+                        stream.close()
+                if process.stderr and (not stderr_thread or not stderr_thread.is_alive()):
+                    process.stderr.close()
             self._close_job_handle()
             self.on_done(returncode, "".join(stderr_lines))
 

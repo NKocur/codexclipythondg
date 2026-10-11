@@ -1,0 +1,1493 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Workbench · Your AI team, working together</title>
+<script>
+// Apply the theme before first paint so there is no flash.
+try{document.documentElement.dataset.theme=localStorage.getItem('workbench-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');}catch{document.documentElement.dataset.theme='light';}
+</script>
+<style>
+:root{
+  --bg:#f6f4ef;--surface:#fff;--surface-2:#f2efe8;--ink:#1d2129;--muted:#5d6470;--faint:#878d98;
+  --line:#e7e2d8;--line-strong:#d6cfc2;
+  --accent:#4a63f0;--accent-hover:#3a52d8;--accent-ink:#fff;--accent-soft:#eceffe;
+  --good:#15824c;--good-soft:#e2f4e9;--warn:#a16400;--warn-soft:#fff2d9;--danger:#c03a3a;
+  --shadow-sm:0 1px 2px rgb(40 30 10 / .05);
+  --shadow:0 1px 2px rgb(40 30 10 / .04),0 8px 24px rgb(40 30 10 / .06);
+  --shadow-lg:0 30px 80px rgb(20 15 5 / .22);
+  --font:"Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif;
+  --mono:"Cascadia Code",Consolas,ui-monospace,monospace;
+  color-scheme:light;
+}
+[data-theme=dark]{
+  --bg:#13151a;--surface:#1b1e25;--surface-2:#242832;--ink:#eceef3;--muted:#a3a9b5;--faint:#7d8491;
+  --line:#2b2f39;--line-strong:#3a3f4b;
+  --accent:#8193ff;--accent-hover:#9aa8ff;--accent-ink:#0e1124;--accent-soft:#252c4d;
+  --good:#52c48d;--good-soft:#173527;--warn:#e6b45e;--warn-soft:#3a2d15;--danger:#ef7b7b;
+  --shadow-sm:none;--shadow:0 1px 0 rgb(255 255 255 / .03);--shadow-lg:0 30px 80px rgb(0 0 0 / .55);
+  color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+html{background:var(--bg)}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 var(--font);-webkit-font-smoothing:antialiased}
+h1,h2,h3,p{margin:0}
+p{color:var(--muted)}
+button,input,textarea,select{font:inherit;color:inherit}
+svg{width:18px;height:18px;flex-shrink:0;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.hidden{display:none!important}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+:focus-visible{outline:3px solid color-mix(in srgb,var(--accent) 55%,transparent);outline-offset:2px}
+
+/* Scrollbars: slim rounded thumb that floats inside the edge; the track stops short of rounded corners. */
+::-webkit-scrollbar{width:14px;height:14px}
+::-webkit-scrollbar-track{background:transparent;margin:12px}
+::-webkit-scrollbar-thumb{background:var(--line-strong);border:4px solid transparent;border-radius:99px;background-clip:padding-box;min-height:40px}
+::-webkit-scrollbar-thumb:hover{background-color:var(--faint)}
+::-webkit-scrollbar-corner{background:transparent}
+html::-webkit-scrollbar-track{margin:0}
+.dialog-body::-webkit-scrollbar-track{margin:4px 0}
+/* Soften the edges where content scrolls out of view. */
+.dialog-body,.feed{-webkit-mask-image:linear-gradient(transparent,#000 14px,#000 calc(100% - 14px),transparent);mask-image:linear-gradient(transparent,#000 14px,#000 calc(100% - 14px),transparent)}
+@supports not selector(::-webkit-scrollbar){*{scrollbar-width:thin;scrollbar-color:var(--line-strong) transparent}}
+
+/* Buttons */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:1px solid var(--line-strong);background:var(--surface);color:var(--ink);border-radius:10px;padding:9px 15px;font-size:14px;font-weight:550;cursor:pointer;transition:background .15s,border-color .15s,color .15s,transform .1s;white-space:nowrap}
+.btn:hover{background:var(--surface-2)}
+.btn:active{transform:translateY(1px)}
+.btn:disabled{opacity:.45;cursor:not-allowed;transform:none}
+.btn svg{width:17px;height:17px}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);box-shadow:0 2px 8px color-mix(in srgb,var(--accent) 30%,transparent)}
+.btn.primary:hover{background:var(--accent-hover);border-color:var(--accent-hover)}
+.btn.primary svg.fill{fill:currentColor}
+.btn.large{padding:12px 22px;font-size:15.5px;border-radius:12px}
+.btn.ghost{border-color:transparent;background:transparent;color:var(--muted)}
+.btn.ghost:hover{background:var(--surface-2);color:var(--ink)}
+.btn.danger{color:var(--danger)}
+.icon-btn{display:inline-grid;place-items:center;width:38px;height:38px;border-radius:10px;border:0;background:transparent;color:var(--muted);cursor:pointer}
+.icon-btn:hover{background:var(--surface-2);color:var(--ink)}
+
+/* Top bar */
+.topbar{position:sticky;top:0;z-index:10;background:color-mix(in srgb,var(--bg) 85%,transparent);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+.topbar-inner{max-width:1180px;margin:0 auto;height:66px;padding:0 28px;display:flex;align-items:center;gap:32px}
+.brand{display:flex;align-items:center;gap:10px;font-size:18px;font-weight:650;letter-spacing:-.02em}
+.logo{width:34px;height:34px;border-radius:11px;display:grid;place-items:center;color:#fff;background:linear-gradient(135deg,#4a63f0,#8b5cf6)}
+.logo svg{width:19px;height:19px}
+.nav{display:flex;gap:4px;padding:4px;background:var(--surface-2);border-radius:12px}
+.nav button{display:flex;align-items:center;gap:7px;border:0;background:transparent;color:var(--muted);padding:7px 14px;border-radius:9px;font-size:14px;font-weight:550;cursor:pointer}
+.nav button svg{width:16px;height:16px}
+.nav button:hover{color:var(--ink)}
+.nav button.active{background:var(--surface);color:var(--ink);box-shadow:var(--shadow-sm),0 0 0 1px var(--line)}
+.topbar-end{margin-left:auto;display:flex;align-items:center;gap:4px}
+.demo-badge{font-size:12.5px;font-weight:600;color:var(--warn);background:var(--warn-soft);padding:4px 10px;border-radius:99px;margin-right:8px}
+
+/* Page */
+.page{max-width:1180px;margin:0 auto;padding:44px 28px 72px}
+.hero{margin-bottom:22px}
+.greeting{font-size:15px;color:var(--muted);font-weight:500;margin-bottom:4px}
+h1{font-size:34px;line-height:1.2;letter-spacing:-.025em;font-weight:680}
+h2{font-size:19px;letter-spacing:-.01em;font-weight:650}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow)}
+
+/* Goal composer */
+.composer{padding:20px 22px 16px;border-radius:22px;transition:border-color .15s,box-shadow .15s}
+.composer:focus-within{border-color:color-mix(in srgb,var(--accent) 60%,var(--line));box-shadow:var(--shadow),0 0 0 4px var(--accent-soft)}
+.composer label{display:block;font-size:13.5px;font-weight:600;color:var(--muted)}
+.composer textarea{display:block;width:100%;min-height:86px;resize:vertical;border:0;background:transparent;font-size:19px;line-height:1.55;padding:8px 0 4px}
+.composer textarea:focus{outline:0}
+.composer textarea::placeholder{color:var(--faint)}
+.composer textarea[readonly]{color:var(--muted)}
+.chips{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:6px}
+.chips-label{font-size:13px;color:var(--faint);margin-right:2px}
+.chip{border:1px solid var(--line);background:transparent;border-radius:99px;padding:5px 12px;font-size:13.5px;color:var(--muted);cursor:pointer;transition:all .15s}
+.chip:hover:not(:disabled){background:var(--accent-soft);border-color:transparent;color:var(--accent)}
+.chip:disabled{opacity:.5;cursor:default}
+.composer-foot{display:flex;align-items:center;justify-content:space-between;gap:14px;border-top:1px solid var(--line);margin-top:16px;padding-top:14px}
+.workspace{display:flex;align-items:center;gap:10px;min-width:0;border:0;background:transparent;padding:6px 10px 6px 6px;margin-left:-6px;border-radius:10px;cursor:pointer;text-align:left}
+.workspace:hover{background:var(--surface-2)}
+.workspace .tile{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;background:var(--surface-2);color:var(--muted)}
+.workspace strong{display:block;font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:280px}
+.workspace small{display:block;font-size:12.5px;color:var(--faint)}
+.workspace>svg:last-child{color:var(--faint);width:15px}
+.run-actions{display:flex;align-items:center;gap:10px;flex-shrink:0}
+.kbd-hint{font-size:12.5px;color:var(--faint)}
+kbd{font:11.5px var(--mono);padding:1px 6px;border:1px solid var(--line-strong);border-bottom-width:2px;border-radius:5px;background:var(--surface)}
+
+/* Section headings */
+.section{margin-top:40px}
+.section-head{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;flex-wrap:wrap}
+.section-head p{font-size:14.5px;margin-top:3px}
+.count{display:inline-block;font-size:13px;font-weight:600;color:var(--muted);background:var(--surface-2);border-radius:99px;padding:1px 9px;margin-left:6px;vertical-align:3px}
+
+/* Team preset picker */
+.team-title{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.preset-wrap{position:relative}
+.preset-btn{display:flex;align-items:center;gap:10px;padding:6px 10px 6px 8px;border:1px solid var(--line-strong);border-radius:12px;background:var(--surface);box-shadow:var(--shadow-sm);font-size:14.5px;cursor:pointer;transition:border-color .15s,box-shadow .15s}
+.preset-btn:hover,.preset-btn[aria-expanded=true]{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.preset-btn:disabled{opacity:.55;cursor:not-allowed;box-shadow:none;border-color:var(--line-strong)}
+.preset-btn strong{font-weight:640}
+.preset-btn small{font-size:13px;color:var(--faint)}
+.preset-btn>svg:last-child{width:16px;height:16px;color:var(--faint)}
+.mini-stack{display:flex;flex-shrink:0}
+.mini-stack .avatar{width:26px;height:26px;border-radius:8px;margin:0 0 0 -7px;border:2px solid var(--surface)}
+.mini-stack .avatar:first-child{margin-left:0}
+.mini-stack .avatar svg{width:13px;height:13px}
+.edited{font-size:12px;font-weight:600;color:var(--warn);background:var(--warn-soft);padding:1px 8px;border-radius:99px}
+.preset-menu{position:absolute;top:calc(100% + 8px);left:0;z-index:15;width:min(460px,calc(100vw - 32px));max-height:min(560px,70vh);overflow:auto;overscroll-behavior:contain;padding:8px;background:var(--surface);border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow-lg);animation:pop .15s ease-out}
+.menu-label{padding:8px 10px 6px;font-size:12.5px;font-weight:600;color:var(--faint);text-transform:uppercase;letter-spacing:.06em}
+.preset-option{display:grid;grid-template-columns:104px minmax(0,1fr) 18px;align-items:center;gap:12px;width:100%;padding:10px;border:0;background:transparent;border-radius:12px;text-align:left;cursor:pointer}
+.preset-option:hover,.preset-option:focus-visible{background:var(--surface-2)}
+.preset-option.current{background:var(--accent-soft)}
+.preset-option strong{display:block;font-size:14.5px;font-weight:620}
+.preset-option p{font-size:13px;line-height:1.35}
+.preset-option strong small{font-size:12.5px;font-weight:500;color:var(--faint);margin-left:8px}
+.preset-option .tick{color:var(--accent);stroke-width:2.6}
+.menu-sep{height:1px;background:var(--line);margin:6px 4px}
+.menu-action{display:flex;align-items:center;gap:10px;width:100%;padding:9px 10px;border:0;background:transparent;border-radius:10px;font-size:14px;font-weight:550;text-align:left;cursor:pointer}
+.menu-action:hover,.menu-action:focus-visible{background:var(--surface-2)}
+.menu-action svg{width:16px;height:16px;color:var(--muted)}
+.menu-action.danger,.menu-action.danger svg{color:var(--danger)}
+.team-tip{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px;padding:8px 8px 8px 14px;border-radius:12px;background:var(--accent-soft);font-size:14px;animation:pop .18s ease-out}
+.team-tip>svg{color:var(--accent)}
+.team-tip .tip-actions{display:flex;align-items:center;gap:4px;margin-left:auto}
+.team-tip .btn{padding:6px 12px;font-size:13.5px}
+.team-tip .icon-btn{width:32px;height:32px}
+
+/* Toggle switch */
+.switch{display:flex;align-items:center;gap:10px;font-size:14px;color:var(--muted);cursor:pointer;user-select:none}
+.switch input{appearance:none;margin:0;width:40px;height:23px;border-radius:99px;background:var(--line-strong);position:relative;cursor:pointer;transition:background .2s;flex-shrink:0}
+.switch input::before{content:'';position:absolute;top:3px;left:3px;width:17px;height:17px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgb(0 0 0 / .25);transition:transform .2s}
+.switch input:checked{background:var(--accent)}
+.switch input:checked::before{transform:translateX(17px)}
+
+/* Team relay */
+.relay{list-style:none;margin:16px -6px 0;padding:6px 6px 14px;display:flex;align-items:stretch;overflow-x:auto;scroll-snap-type:x proximity}
+.relay-item{display:flex;align-items:center;flex:1 1 0;min-width:178px;scroll-snap-align:start}
+.mate{--c:var(--accent);position:relative;flex:1;align-self:stretch;display:flex;flex-direction:column;align-items:flex-start;gap:3px;padding:18px 16px 16px;text-align:left;background:var(--surface);border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow-sm);cursor:pointer;transition:transform .15s,box-shadow .15s,border-color .15s}
+.mate:hover{transform:translateY(-2px);box-shadow:var(--shadow);border-color:color-mix(in srgb,var(--c) 45%,var(--line))}
+.mate-step{position:absolute;top:14px;right:16px;font-size:12.5px;font-weight:600;color:var(--faint)}
+.avatar{--c:var(--accent);position:relative;width:44px;height:44px;border-radius:14px;display:grid;place-items:center;background:color-mix(in srgb,var(--c) 15%,var(--surface));color:var(--c);margin-bottom:8px;flex-shrink:0}
+.avatar svg{width:22px;height:22px}
+.avatar.lg{width:56px;height:56px;border-radius:17px;margin:0}
+.avatar.lg svg{width:27px;height:27px}
+.avatar.sm{width:36px;height:36px;border-radius:12px;margin:0}
+.avatar.sm svg{width:18px;height:18px}
+.avatar .badge{position:absolute;right:-5px;bottom:-5px;width:21px;height:21px;border-radius:50%;display:grid;place-items:center;background:var(--good);color:#fff;border:2px solid var(--surface)}
+.avatar .badge svg{width:12px;height:12px;stroke-width:3}
+.mate-name{font-size:16px;font-weight:620;line-height:1.3}
+.mate-role{font-size:13.5px;color:var(--muted);line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.mate-meta{margin-top:auto;padding-top:12px;display:flex;flex-wrap:wrap;gap:6px}
+.mate-route{display:flex;align-items:flex-start;gap:5px;margin-top:6px;font-size:12.5px;font-weight:550;color:var(--muted);line-height:1.35}
+.mate-route svg{width:14px;height:14px;margin-top:1px;color:var(--c)}
+.pill{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:550;padding:2px 8px;border-radius:99px;background:var(--surface-2);color:var(--muted);white-space:nowrap}
+.pill.working{background:color-mix(in srgb,var(--c,var(--accent)) 15%,var(--surface));color:var(--c,var(--accent))}
+.pill.working::before{content:'';width:7px;height:7px;border-radius:50%;background:currentColor;animation:blink 1.2s infinite}
+.pill.done{background:var(--good-soft);color:var(--good)}
+.pill.paused{background:var(--warn-soft);color:var(--warn)}
+.pill.waiting{color:var(--faint)}
+.mate.is-working{border-color:var(--c);box-shadow:0 0 0 4px color-mix(in srgb,var(--c) 16%,transparent),var(--shadow)}
+.mate.is-working .avatar{animation:pulse 1.8s infinite}
+.mate.is-waiting{opacity:.72}
+.connector{flex:none;width:28px;display:grid;place-items:center;color:var(--line-strong)}
+.connector.done{color:var(--good)}
+.add-item{flex:0 0 150px;min-width:150px;margin-left:14px}
+.mate.add{align-items:center;justify-content:center;gap:8px;border:1.5px dashed var(--line-strong);background:transparent;box-shadow:none;color:var(--muted);font-weight:600;font-size:14.5px;min-height:170px}
+.mate.add:hover:not(:disabled){border-color:var(--accent);color:var(--accent);background:var(--accent-soft);transform:none}
+.mate.add:disabled{opacity:.45;cursor:not-allowed}
+.mate.add .plus{width:40px;height:40px;border-radius:50%;display:grid;place-items:center;background:var(--surface-2)}
+
+/* Run status */
+.status-card{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:18px;padding:20px 22px}
+.status-card h2{font-size:19px}
+.status-card .sub{font-size:14.5px;margin-top:2px}
+.stack{display:flex}
+.stack .avatar{border:3px solid var(--surface);width:42px;height:42px;margin:0 0 0 -12px}
+.stack .avatar:first-child{margin-left:0}
+.stack .avatar svg{width:19px;height:19px}
+.status-visual .avatar.lg.live{animation:pulse 1.8s infinite}
+.done-mark{width:56px;height:56px;border-radius:17px;display:grid;place-items:center;background:var(--good-soft);color:var(--good)}
+.done-mark svg{width:28px;height:28px;stroke-width:2.4}
+/* Flow diagram */
+.flow-wrap{grid-column:1/-1;border-top:1px solid var(--line);margin:2px -22px -20px;padding:14px 22px 16px}
+.flow-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.flow-wrap.open .flow-head{margin-bottom:6px}
+.flow-toggle{display:flex;align-items:center;gap:8px;border:0;background:transparent;padding:4px 8px 4px 4px;margin-left:-4px;border-radius:8px;cursor:pointer;color:var(--ink);text-align:left}
+.flow-toggle:hover{background:var(--surface-2)}
+.flow-toggle svg{width:15px;height:15px;color:var(--faint);transition:transform .2s}
+.flow-wrap.open .flow-toggle svg{transform:rotate(90deg)}
+.flow-summary{font-size:13px;color:var(--faint)}
+.flow-wrap:not(.open) .legend,.flow-wrap:not(.open) .flow-scroll{display:none}
+.legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12.5px;color:var(--muted)}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.legend svg{width:28px;height:10px;stroke:var(--faint);stroke-width:1.8}
+.legend .back svg{stroke:var(--accent)}
+.flow-scroll{overflow-x:auto;overscroll-behavior-x:contain}
+#flow svg.flow-svg{display:block;width:100%;height:auto;margin:0 auto;fill:none;stroke:none;overflow:visible}
+.fedge path{fill:none;stroke:var(--line-strong);stroke-width:1.8;transition:stroke .3s}
+.fedge polygon{fill:var(--line-strong);stroke:none;transition:fill .3s}
+.fedge.maybe path{stroke-dasharray:5 5}
+.fedge.back path{stroke:color-mix(in srgb,var(--c) 55%,var(--line-strong))}
+.fedge.back polygon{fill:color-mix(in srgb,var(--c) 55%,var(--line-strong))}
+.fedge.walked path{stroke:var(--c);stroke-width:2.4;stroke-dasharray:none}
+.fedge.walked polygon{fill:var(--c)}
+.fnode{cursor:pointer}
+.fnode:focus{outline:none}
+.fnode:focus-visible .bg{stroke:var(--accent);stroke-width:2.5}
+.fnode .bg{fill:var(--surface);stroke:var(--line-strong);stroke-width:1.2;transition:stroke .2s}
+.fnode:hover .bg{stroke:var(--c)}
+.fnode .ic{fill:color-mix(in srgb,var(--c) 15%,var(--surface))}
+.fnode use{color:var(--c);stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.fnode text,.fpill text{fill:var(--ink);stroke:none;font:600 13.5px var(--font)}
+.fnode text.two{font-size:12.5px}
+.fnode.working .bg{stroke:var(--c);stroke-width:2}
+.fnode .halo{fill:none;stroke:var(--c);stroke-width:5;opacity:0}
+.fnode.working .halo{animation:halo 1.6s ease-out infinite}
+.fnode.done .bg{stroke:color-mix(in srgb,var(--c) 55%,var(--line))}
+.fnode.waiting{opacity:.6}
+.fnode.skipped{opacity:.38}
+.fnode .badge-dot{fill:var(--good);stroke:var(--surface);stroke-width:2}
+.fnode .badge-use{color:#fff;stroke-width:3.2}
+.fpill rect{fill:var(--surface-2);stroke:none}
+.fpill text{fill:var(--muted);font-size:12px}
+.fpill.on rect{fill:var(--accent-soft)}
+.fpill.on text{fill:var(--accent)}
+.fpill.done rect{fill:var(--good-soft)}
+.fpill.done text{fill:var(--good)}
+@keyframes halo{0%{opacity:.4}100%{opacity:0}}
+.run-grid{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(0,1fr);gap:20px;margin-top:20px;align-items:start}
+.card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:18px 20px 6px}
+.card-head h2{font-size:16.5px}
+.card-head p{font-size:13.5px}
+.stale-tag{display:inline-flex;align-items:center;gap:5px;font-weight:600;color:var(--warn)}
+.stale-tag svg{width:14px;height:14px}
+.is-stale #feed,.is-stale #results{opacity:.72}
+
+/* Activity feed */
+.feed{padding:4px 14px 18px 20px;margin-right:6px;max-height:470px;overflow:auto;overscroll-behavior:contain}
+.event{--c:var(--accent);display:grid;grid-template-columns:36px minmax(0,1fr) auto;gap:12px;padding:11px 0;position:relative}
+.event:not(:last-child)::before{content:'';position:absolute;left:17px;top:51px;bottom:-7px;border-left:2px solid var(--line)}
+.event .dot{width:36px;height:36px;border-radius:12px;display:grid;place-items:center;background:color-mix(in srgb,var(--c) 14%,var(--surface));color:var(--c)}
+.event .dot svg{width:17px;height:17px}
+.event strong{display:block;font-size:14.5px;font-weight:620;padding-top:1px}
+.event p{font-size:14px}
+.event time{font-size:12.5px;color:var(--faint);padding-top:3px;white-space:nowrap}
+.file-chip{display:inline-flex;align-items:center;gap:6px;margin-top:8px;padding:4px 10px;border:1px solid var(--line);border-radius:9px;background:var(--surface-2);font:12.5px var(--mono);color:var(--ink);cursor:pointer}
+.file-chip:hover{border-color:var(--accent);color:var(--accent)}
+.file-chip svg{width:14px;height:14px}
+.typing{display:inline-flex;gap:4px;margin-top:8px}
+.typing span{width:7px;height:7px;border-radius:50%;background:var(--c);animation:blink 1.2s infinite}
+.typing span:nth-child(2){animation-delay:.2s}
+.typing span:nth-child(3){animation-delay:.4s}
+
+/* Results */
+.results{padding:6px 12px 12px}
+.result{--c:var(--accent);display:flex;align-items:center;gap:12px;padding:10px 8px;border-radius:12px}
+.result:hover{background:var(--surface-2)}
+.result .file-tile{width:38px;height:38px;border-radius:11px;display:grid;place-items:center;background:color-mix(in srgb,var(--c) 14%,var(--surface));color:var(--c)}
+.result div{flex:1;min-width:0}
+.result strong{display:block;font:600 13.5px var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.result p{font-size:13px}
+
+/* Empty states */
+.empty{padding:34px 20px 38px;text-align:center}
+.empty .stack{justify-content:center;margin-bottom:16px}
+.empty .glyph{width:52px;height:52px;margin:0 auto 14px;border-radius:16px;display:grid;place-items:center;background:var(--surface-2);color:var(--faint)}
+.empty .glyph svg{width:25px;height:25px}
+.empty h3{font-size:15.5px;font-weight:620}
+.empty p{font-size:14px;margin:4px auto 0;max-width:340px}
+
+.footnote{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:28px;font-size:13.5px;color:var(--faint)}
+
+/* Team view */
+.team-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:18px;margin-top:22px}
+.team-card{--c:var(--accent);display:flex;flex-direction:column;padding:22px}
+.team-card-top{display:flex;align-items:center;gap:14px}
+.team-card-top .avatar{margin:0}
+.team-card h3{font-size:17px;font-weight:640}
+.team-card-top p{font-size:14px}
+.team-card .step{margin-left:auto;align-self:flex-start;font-size:12.5px;font-weight:600;color:var(--faint)}
+.quote{margin:16px 0 14px;padding:12px 14px;border-radius:12px;background:var(--surface-2);font-size:14px;color:var(--muted);display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
+.team-card .mate-meta{padding-top:0}
+.team-card-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:16px;padding-top:14px;border-top:1px solid var(--line);font-size:13.5px;color:var(--muted)}
+.team-card-foot b{color:var(--ink);font-weight:600}
+.team-grid .mate.add{min-height:240px}
+
+/* History */
+.history-list{margin-top:22px;padding:6px}
+.history-row{display:flex;align-items:center;gap:14px;padding:14px;border-radius:12px}
+.history-row+.history-row{border-top:1px solid var(--line);border-radius:0}
+.history-row .ok{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;background:var(--good-soft);color:var(--good)}
+.history-row .ok.stopped{background:var(--surface-2);color:var(--faint)}
+.history-row div{flex:1;min-width:0}
+.history-row strong{display:block;font-size:15px;font-weight:600}
+.history-row p{font-size:13.5px}
+
+/* Settings */
+.settings{max-width:760px;margin-top:22px;padding:8px 24px}
+.provider-row{display:grid;grid-template-columns:auto minmax(0,1fr);gap:16px;padding:20px 0}
+.provider-row+.provider-row{border-top:1px solid var(--line)}
+.provider-row h3{font-size:16px;font-weight:620;display:flex;align-items:center;gap:10px}
+.provider-row>div>p{font-size:14px;margin:2px 0 10px}
+.settings-foot{display:flex;justify-content:flex-end;padding:4px 0 20px}
+
+/* Dialogs & forms */
+dialog{border:0;border-radius:22px;padding:0;width:min(580px,calc(100% - 32px));max-height:calc(100vh - 48px);background:var(--surface);color:var(--ink);box-shadow:var(--shadow-lg)}
+dialog[open]{display:flex;flex-direction:column;overflow:hidden;animation:pop .18s ease-out}
+dialog>form,dialog>#detailBody{display:flex;flex-direction:column;flex:1;min-height:0}
+dialog::backdrop{background:rgb(20 18 12 / .38);backdrop-filter:blur(4px)}
+.dialog-head{display:flex;align-items:center;gap:14px;padding:22px 24px 4px}
+.dialog-head h2{font-size:20px}
+.dialog-head p{font-size:14px}
+.dialog-head .icon-btn{margin-left:auto;align-self:flex-start}
+.dialog-body{padding:16px 24px 8px;flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain}
+.dialog-foot{display:flex;justify-content:flex-end;gap:10px;padding:16px 24px 22px}
+.field{display:block;margin-bottom:18px}
+.field>span{display:block;font-size:14px;font-weight:600}
+.field>small{display:block;font-size:13px;color:var(--muted);margin-top:1px}
+.field input,.field select,.field textarea{display:block;width:100%;margin-top:7px;padding:10px 13px;border:1px solid var(--line-strong);border-radius:11px;background:var(--surface);font-size:15px}
+.field textarea{min-height:110px;resize:vertical;line-height:1.5}
+.field input:focus,.field select:focus,.field textarea:focus{outline:0;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.field ::placeholder{color:var(--faint)}
+.field input[readonly]{background:var(--surface-2);color:var(--muted)}
+.form-row{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.choices{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:8px}
+.choice{display:block;padding:11px 13px;border:1px solid var(--line-strong);border-radius:12px;cursor:pointer;transition:all .15s}
+.choice:hover{border-color:var(--accent)}
+.choice:has(input:checked){border-color:var(--accent);background:var(--accent-soft);box-shadow:0 0 0 1px var(--accent)}
+.choice:has(input:focus-visible){outline:3px solid color-mix(in srgb,var(--accent) 55%,transparent);outline-offset:2px}
+.choice input{position:absolute;opacity:0;pointer-events:none}
+.choice b{display:block;font-size:14.5px;font-weight:620}
+.choice small{display:block;font-size:12.5px;color:var(--muted);line-height:1.35;margin-top:1px}
+.targets{margin-top:10px;padding:14px;border-radius:14px;background:var(--surface-2)}
+.targets p{font-size:13.5px;margin-bottom:10px}
+.target-list{display:flex;flex-wrap:wrap;gap:8px}
+.target{--c:var(--accent);position:relative;display:flex;align-items:center;gap:8px;padding:5px 12px 5px 5px;border:1px solid var(--line-strong);border-radius:99px;background:var(--surface);cursor:pointer;font-size:14px;font-weight:600;transition:all .15s}
+.target:hover{border-color:var(--accent)}
+.target:has(input:checked){border-color:var(--accent);background:var(--accent-soft);box-shadow:0 0 0 1px var(--accent)}
+.target:has(input:focus-visible){outline:3px solid color-mix(in srgb,var(--accent) 55%,transparent);outline-offset:2px}
+.target input{position:absolute;opacity:0;pointer-events:none}
+.target .avatar{width:28px;height:28px;border-radius:9px;margin:0}
+.target .avatar svg{width:15px;height:15px}
+.target small{font-size:12px;font-weight:500;color:var(--faint)}
+.target .tick{display:none;width:15px;height:15px;color:var(--accent);stroke-width:2.6}
+.target:has(input:checked) .tick{display:block}
+.look{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:8px}
+.look label{cursor:pointer}
+.look input{position:absolute;opacity:0;pointer-events:none}
+.look .glyph-opt{width:38px;height:38px;border-radius:11px;display:grid;place-items:center;border:1px solid var(--line-strong);color:var(--muted)}
+.look input:checked+.glyph-opt{border-color:var(--accent);background:var(--accent-soft);color:var(--accent)}
+.look .swatch{display:block;width:26px;height:26px;border-radius:50%;background:var(--c);box-shadow:inset 0 0 0 2px rgb(255 255 255 / .35)}
+.look input:checked+.swatch{box-shadow:0 0 0 2px var(--surface),0 0 0 4px var(--c)}
+.look input:focus-visible+span{outline:3px solid color-mix(in srgb,var(--accent) 55%,transparent);outline-offset:2px}
+.look-divider{width:1px;height:26px;background:var(--line);margin:0 6px}
+details.advanced{border:1px solid var(--line);border-radius:14px;padding:0 16px;margin-top:4px}
+details.advanced summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:8px;padding:13px 0;font-size:14px;font-weight:600;color:var(--muted)}
+details.advanced summary::-webkit-details-marker{display:none}
+.summary-hint{font-size:13px;font-weight:500;color:var(--faint)}
+details.advanced summary svg{width:16px;height:16px;transition:transform .2s;margin-left:auto}
+details.advanced[open] summary svg{transform:rotate(180deg)}
+details.advanced .advanced-body{padding:4px 0 2px}
+.info-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px}
+.info-grid label{display:block;font-size:13px;color:var(--muted)}
+.info-grid strong{font-size:14.5px;font-weight:600;overflow-wrap:anywhere}
+.label{font-size:13px;font-weight:600;color:var(--muted)}
+pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;font:13.5px/1.75 var(--mono);background:var(--surface-2);padding:16px 18px;border-radius:14px}
+
+/* Folder picking */
+.input-group{display:flex;gap:8px;margin-top:7px}
+.input-group input{flex:1;min-width:0;margin-top:0!important;font-family:var(--mono);font-size:13.5px!important}
+.recent{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:10px}
+.recent>span{font-size:13px;color:var(--faint);margin-right:2px}
+.fb{display:grid;grid-template-columns:170px minmax(0,1fr);gap:18px}
+.places{display:flex;flex-direction:column;gap:2px}
+.places h3{font-size:12px;font-weight:600;color:var(--faint);text-transform:uppercase;letter-spacing:.06em;margin:4px 10px 6px}
+.places h3:not(:first-child){margin-top:14px}
+.places button{display:flex;align-items:center;gap:9px;width:100%;padding:8px 10px;border:0;background:transparent;border-radius:10px;font-size:14px;font-weight:550;color:var(--muted);text-align:left;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.places button:hover{background:var(--surface-2);color:var(--ink)}
+.places button.on{background:var(--accent-soft);color:var(--accent)}
+.places svg{width:17px;height:17px}
+.fb-main{min-width:0;display:flex;flex-direction:column}
+.fb-bar{display:flex;align-items:center;gap:6px;margin-bottom:10px}
+.fb-bar .icon-btn{flex-shrink:0;border:1px solid var(--line-strong);width:34px;height:34px}
+.fb-bar .icon-btn:disabled{opacity:.4;cursor:default}
+.crumbs{display:flex;align-items:center;flex-wrap:wrap;gap:2px;min-width:0;font-size:14px}
+.crumbs button{border:0;background:transparent;padding:4px 7px;border-radius:7px;color:var(--muted);font-weight:550;cursor:pointer}
+.crumbs button:hover{background:var(--surface-2);color:var(--ink)}
+.crumbs button[aria-current]{color:var(--ink);font-weight:650}
+.crumbs svg{width:14px;height:14px;color:var(--faint)}
+.fb-filter{width:100%;padding:8px 12px;border:1px solid var(--line-strong);border-radius:10px;background:var(--surface);font-size:14px;margin-bottom:8px}
+.fb-filter:focus{outline:0;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.folder-list{height:300px;overflow-y:auto;border:1px solid var(--line);border-radius:14px;padding:6px;overscroll-behavior:contain}
+.folder-row{display:flex;align-items:center;gap:6px;border-radius:10px}
+.folder-row:hover,.folder-row:focus-within{background:var(--surface-2)}
+.folder-open{flex:1;min-width:0;display:flex;align-items:center;gap:11px;padding:8px 10px;border:0;background:transparent;border-radius:10px;font-size:14.5px;font-weight:550;text-align:left;cursor:pointer}
+.folder-open .ficon{width:32px;height:32px;border-radius:9px;display:grid;place-items:center;background:color-mix(in srgb,#d48f00 14%,var(--surface));color:#c08000;flex-shrink:0}
+[data-theme=dark] .folder-open .ficon{color:#e6b45e}
+.folder-open .fname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.folder-open>svg:last-child{margin-left:auto;color:var(--faint);width:16px}
+.folder-row .use{opacity:0;padding:5px 11px;font-size:13px;margin-right:6px}
+.folder-row:hover .use,.folder-row:focus-within .use{opacity:1}
+.git-pill{display:inline-flex;align-items:center;gap:4px;font-size:12px;font-weight:600;color:var(--good);background:var(--good-soft);padding:1px 8px;border-radius:99px;flex-shrink:0}
+.git-pill svg{width:12px;height:12px}
+.folder-empty{display:grid;place-items:center;height:100%;text-align:center;color:var(--muted);font-size:14px;padding:20px}
+.fb-foot{align-items:center}
+.fb-choice{display:flex;align-items:center;gap:10px;min-width:0;margin-right:auto}
+.fb-choice .tile{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;background:var(--surface-2);color:var(--muted);flex-shrink:0}
+.fb-choice strong{display:flex;align-items:center;gap:8px;font-size:14.5px;font-weight:620}
+.fb-choice small{display:block;font:12px var(--mono);color:var(--faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:330px;direction:rtl;text-align:left}
+
+/* Sticky run bar: appears when the main Start/Pause button is scrolled out of view during a run. */
+.runbar{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:12;display:flex;align-items:center;gap:12px;width:min(560px,calc(100% - 24px));padding:10px 10px 10px 12px;background:color-mix(in srgb,var(--surface) 92%,transparent);backdrop-filter:blur(12px);border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow-lg);animation:rise .22s ease-out}
+.runbar .avatar{width:38px;height:38px;border-radius:12px;margin:0}
+.runbar .avatar svg{width:19px;height:19px}
+.runbar .avatar.live{animation:pulse 1.8s infinite}
+.runbar-text{flex:1;min-width:0}
+.runbar-text strong{display:block;font-size:14.5px;font-weight:620;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.runbar-text small{display:block;font-size:12.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.runbar .btn{padding:8px 13px}
+body.has-runbar .toast{bottom:96px}
+body.has-runbar .page{padding-bottom:120px}
+
+/* Toast */
+.toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);z-index:20;max-width:calc(100% - 32px);display:flex;align-items:center;gap:10px;padding:12px 18px;border-radius:14px;background:var(--ink);color:var(--bg);font-size:14.5px;font-weight:500;box-shadow:var(--shadow-lg);animation:rise .22s ease-out}
+.toast svg{color:var(--good)}
+
+@keyframes pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--c) 45%,transparent)}70%{box-shadow:0 0 0 12px transparent}100%{box-shadow:0 0 0 0 transparent}}
+@keyframes blink{0%,100%{opacity:.25}50%{opacity:1}}
+@keyframes shimmer{from{background-position:200% 0}to{background-position:0 0}}
+@keyframes pop{from{opacity:0;transform:translateY(8px) scale(.98)}to{opacity:1;transform:none}}
+@keyframes rise{from{opacity:0;transform:translate(-50%,10px)}to{opacity:1;transform:translate(-50%,0)}}
+
+@media (max-width:900px){
+  .run-grid{grid-template-columns:1fr}
+  .relay{flex-direction:column;overflow:visible;margin:16px 0 0;padding:0}
+  .relay-item{flex-direction:column;align-items:stretch;min-width:0}
+  .connector{width:auto;height:26px}
+  .connector svg{transform:rotate(90deg)}
+  .mate{display:grid;grid-template-columns:44px minmax(0,1fr) auto;grid-template-areas:"av name meta" "av role meta" "av route meta";column-gap:14px;row-gap:1px;align-items:center;padding:14px 16px}
+  .mate .avatar{grid-area:av;margin:0}
+  .mate-name{grid-area:name}
+  .mate-role{grid-area:role;-webkit-line-clamp:1}
+  .mate-route{grid-area:route;margin-top:3px}
+  .mate-meta{grid-area:meta;margin:0;padding:0;flex-direction:column;align-items:flex-end}
+  .mate-step{display:none}
+  .add-item{flex:none;margin:12px 0 0}
+  .mate.add{display:flex;flex-direction:row;min-height:62px}
+  .mate.add .plus{width:30px;height:30px}
+}
+@media (max-width:640px){
+  .topbar-inner{padding:0 16px;gap:12px}
+  .brand span,.demo-badge,.kbd-hint{display:none}
+  .nav button{padding:7px 11px}
+  .page{padding:28px 16px 56px}
+  h1{font-size:27px}
+  .composer{padding:16px 16px 14px}
+  .composer textarea{font-size:17px}
+  .composer-foot{flex-wrap:wrap}
+  .run-actions{width:100%}
+  .run-actions .btn{flex:1}
+  .status-card{grid-template-columns:auto minmax(0,1fr)}
+  .status-card .status-tools{grid-column:1/-1}
+  .flow-wrap{margin:2px -16px -16px;padding:12px 16px 14px}
+  #flow svg.flow-svg{min-width:640px}
+  .choices,.form-row,.info-grid{grid-template-columns:1fr}
+  .fb{grid-template-columns:1fr;gap:10px}
+  .places{flex-direction:row;overflow-x:auto;padding-bottom:4px}
+  .places h3{display:none}
+  .places button{width:auto;flex-shrink:0}
+  .folder-list{height:260px}
+  .folder-row .use{opacity:1}
+  .fb-foot{flex-wrap:wrap}
+  .fb-choice{width:100%}
+  .team-grid{grid-template-columns:1fr}
+  .footnote{flex-direction:column;align-items:flex-start}
+}
+@media (max-width:440px){.runbar-label{display:none}#runBarStop{padding:8px 10px}.nav{gap:2px}.nav button{padding:7px 8px;gap:5px}.icon-btn{width:34px}}
+@media (prefers-reduced-motion:reduce){*,*::before{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<svg style="display:none" xmlns="http://www.w3.org/2000/svg"><defs>
+<symbol id="i-bot" viewBox="0 0 24 24"><rect x="4" y="7" width="16" height="13" rx="4"/><path d="M12 3v4M9 12.5h.01M15 12.5h.01M9.5 16.5h5"/></symbol>
+<symbol id="i-home" viewBox="0 0 24 24"><path d="M3 11 12 4l9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-5h4v5"/></symbol>
+<symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.2a6.5 6.5 0 0 1 3.5 5.8"/></symbol>
+<symbol id="i-history" viewBox="0 0 24 24"><path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1L3.5 8.5"/><path d="M3.5 3.5v5h5"/><path d="M12 7.5V12l3 2"/></symbol>
+<symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 6h9M19 6h1M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="16" cy="6" r="2.2"/><circle cx="9" cy="12" r="2.2"/><circle cx="17" cy="18" r="2.2"/></symbol>
+<symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2.5 12h2M19.5 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+<symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></symbol>
+<symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+<symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5M9 13h6M9 17h4"/></symbol>
+<symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13a1 1 0 0 0 1.5.9l10.2-6.5a1 1 0 0 0 0-1.8L9.5 4.6A1 1 0 0 0 8 5.5z"/></symbol>
+<symbol id="i-pause" viewBox="0 0 24 24"><path d="M9 5v14M15 5v14"/></symbol>
+<symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2.5"/></symbol>
+<symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+<symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7"/></symbol>
+<symbol id="i-code" viewBox="0 0 24 24"><path d="m8 7-5 5 5 5M16 7l5 5-5 5M14 4l-4 16"/></symbol>
+<symbol id="i-spark" viewBox="0 0 24 24"><path d="m12 3 2.3 6.2L20.5 11.5l-6.2 2.3L12 20l-2.3-6.2-6.2-2.3 6.2-2.3z"/></symbol>
+<symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-5-5 5 5-5 5"/></symbol>
+<symbol id="i-shield" viewBox="0 0 24 24"><path d="m12 3 7.5 3v6c0 4.8-7.5 9-7.5 9s-7.5-4.2-7.5-9V6z"/><path d="m8.8 12 2.3 2.3 4.2-4.6"/></symbol>
+<symbol id="i-map" viewBox="0 0 24 24"><path d="M9 4 3.5 6v14L9 18l6 2 5.5-2V4L15 6z"/><path d="M9 4v14M15 6v14"/></symbol>
+<symbol id="i-book" viewBox="0 0 24 24"><path d="M5 4.5A1.5 1.5 0 0 1 6.5 3H19v15H6.5A1.5 1.5 0 0 0 5 19.5z"/><path d="M5 19.5A1.5 1.5 0 0 0 6.5 21H19v-3M9 7h6"/></symbol>
+<symbol id="i-chat" viewBox="0 0 24 24"><path d="M4 6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H9l-5 4z"/></symbol>
+<symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></symbol>
+<symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+<symbol id="i-x" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+<symbol id="i-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+<symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11m-5-5 5 5 5-5M5 20h14"/></symbol>
+<symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.5 12S6 5 12 5s9.5 7 9.5 7-3.5 7-9.5 7-9.5-7-9.5-7z"/><circle cx="12" cy="12" r="3"/></symbol>
+<symbol id="i-pencil" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></symbol>
+<symbol id="i-list" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01"/></symbol>
+<symbol id="i-bug" viewBox="0 0 24 24"><path d="M9 7.5V7a3 3 0 0 1 6 0v.5"/><rect x="7" y="7.5" width="10" height="12.5" rx="5"/><path d="M12 11v9M3.5 13H7M17 13h3.5M4.5 8l2.7 1.6M19.5 8l-2.7 1.6M4.5 19l2.7-1.8M19.5 19l-2.7-1.8"/></symbol>
+<symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V5m-6 6 6-6 6 6"/></symbol>
+<symbol id="i-chev" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
+<symbol id="i-desktop" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></symbol>
+<symbol id="i-git" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.2"/><circle cx="6" cy="18" r="2.2"/><circle cx="18" cy="12" r="2.2"/><path d="M6 8.2v7.6M8 6.5c5 0 8 1.5 8 3.6"/></symbol>
+<symbol id="i-loop" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></symbol>
+<symbol id="i-branch" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="8" r="2.5"/><path d="M6 8.5v7M18 10.5c0 4-5 4.5-10.2 6.3"/></symbol>
+<symbol id="i-plug" viewBox="0 0 24 24"><path d="M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0zM12 17v4"/></symbol>
+</defs></svg>
+
+<header class="topbar">
+ <div class="topbar-inner">
+  <div class="brand"><div class="logo"><svg aria-hidden="true"><use href="#i-spark"/></svg></div><span>Workbench</span></div>
+  <nav class="nav" aria-label="Main">
+   <button class="active" data-view="home"><svg aria-hidden="true"><use href="#i-home"/></svg>Home</button>
+   <button data-view="team"><svg aria-hidden="true"><use href="#i-users"/></svg>Team</button>
+   <button data-view="history"><svg aria-hidden="true"><use href="#i-history"/></svg>History</button>
+  </nav>
+  <div class="topbar-end">
+   <span class="demo-badge" title="Runs and outputs are simulated">Demo</span>
+   <button class="icon-btn" id="themeToggle" aria-label="Switch theme"><svg aria-hidden="true"><use href="#i-moon"/></svg></button>
+   <button class="icon-btn" data-view="settings" aria-label="Connections"><svg aria-hidden="true"><use href="#i-sliders"/></svg></button>
+  </div>
+ </div>
+</header>
+
+<main class="page">
+ <!-- HOME -->
+ <section id="homeView">
+  <div class="hero">
+   <p class="greeting" id="greeting">Hello</p>
+   <h1>What should your team work on?</h1>
+  </div>
+
+  <div class="card composer">
+   <label for="goal">Your goal</label>
+   <textarea id="goal" placeholder="Describe what you'd like done, in plain words. For example: “Add a dark mode to the settings page.”">Build a friendly web interface for the multi-agent workbench.</textarea>
+   <div class="chips" id="chips"><span class="chips-label">Need an idea?</span></div>
+   <div class="team-tip hidden" id="teamTip" role="status"></div>
+   <div class="composer-foot">
+    <button class="workspace" id="openSettings" title="Change workspace and run settings">
+     <span class="tile"><svg aria-hidden="true"><use href="#i-folder"/></svg></span>
+     <span><strong id="workspaceName">codexclipythondg</strong><small id="workspaceAccess">Can edit files</small></span>
+     <svg aria-hidden="true"><use href="#i-down"/></svg>
+    </button>
+    <div class="run-actions">
+     <span class="kbd-hint" id="kbdHint"><kbd>Ctrl</kbd> + <kbd>Enter</kbd></span>
+     <button class="btn large hidden" id="stopButton"><svg aria-hidden="true"><use href="#i-stop"/></svg>Stop</button>
+     <button class="btn primary large" id="runButton"></button>
+    </div>
+   </div>
+  </div>
+
+  <section class="section" aria-labelledby="teamHeading">
+   <div class="section-head">
+    <div>
+     <div class="team-title"><h2 id="teamHeading">Your team</h2>
+      <div class="preset-wrap">
+       <button class="preset-btn" id="presetButton" aria-haspopup="menu" aria-expanded="false" aria-controls="presetMenu"></button>
+       <div class="preset-menu hidden" id="presetMenu" role="menu" aria-label="Choose a team"></div>
+      </div>
+     </div>
+     <p>They take turns from left to right, unless you let someone choose who goes next. Click anyone to change what they do.</p></div>
+    <label class="switch"><input type="checkbox" role="switch" id="autoAdvance" checked>Keep going automatically</label>
+   </div>
+   <ol class="relay" id="pipeline" aria-label="Team members in running order"></ol>
+  </section>
+
+  <section class="section" aria-label="Progress and results">
+   <div class="card status-card">
+    <div class="status-visual" id="statusVisual"></div>
+    <div aria-live="polite">
+     <h2 id="runHeadline">Your team is ready</h2>
+     <p class="sub" id="runHelp">Describe your goal above, then press Start.</p>
+    </div>
+    <div class="status-tools"><button class="btn ghost" id="logButton"><svg aria-hidden="true"><use href="#i-list"/></svg>Full log</button></div>
+    <div class="flow-wrap">
+     <div class="flow-head">
+      <button class="flow-toggle" id="flowToggle" aria-expanded="true" aria-controls="flowBody"><svg aria-hidden="true"><use href="#i-chev"/></svg><span class="label">How work flows</span><span class="flow-summary" id="flowSummary"></span></button>
+      <span class="legend" id="flowLegend" aria-hidden="true">
+       <span><svg viewBox="0 0 28 10"><path d="M2 5h24"/></svg>Passes along</span>
+       <span><svg viewBox="0 0 28 10"><path d="M2 5h24" stroke-dasharray="4 4"/></svg>Can choose</span>
+       <span class="back"><svg viewBox="0 0 28 10"><path d="M3 9C3 1 25 1 25 9"/></svg>Sends back</span>
+      </span>
+     </div>
+     <div class="flow-scroll" id="flowBody"><div id="flow"></div></div>
+    </div>
+   </div>
+
+   <div class="run-grid" id="runGrid">
+    <div class="card">
+     <div class="card-head"><div><h2>What's happening</h2><p id="feedSub">Step-by-step updates from your team</p></div><button class="btn ghost hidden" data-clear-run>Clear</button></div>
+     <div class="feed" id="feed" role="log" aria-label="Activity"></div>
+    </div>
+    <div class="card" id="resultsCard">
+     <div class="card-head"><div><h2>Results <span class="count" id="artifactCount">0</span></h2><p id="resultsSub">Everything your team made</p></div><button class="btn ghost hidden" data-clear-run>Clear</button></div>
+     <div class="results" id="results"></div>
+    </div>
+   </div>
+  </section>
+
+  <div class="footnote"><span>This is a demo — nothing really runs and no files are touched.</span><button class="btn ghost" id="exportButton"><svg aria-hidden="true"><use href="#i-download"/></svg>Export workflow</button></div>
+ </section>
+
+ <!-- TEAM -->
+ <section id="teamView" class="hidden">
+  <div class="section-head">
+   <div><p class="greeting" style="margin:0">Your team</p><h1 id="teamViewTitle">Plan &amp; build</h1><p id="teamViewBlurb">Each teammate has one job. Give them clear instructions and they'll hand their work to the next.</p></div>
+   <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn ghost" id="restoreTeam">Restore original</button><button class="btn ghost" id="undoTeam">Undo my changes</button><button class="btn" id="saveTeamAs">Save as new team</button><button class="btn primary" data-add><svg aria-hidden="true"><use href="#i-plus"/></svg>Add teammate</button></div>
+  </div>
+  <div class="team-grid" id="teamGrid"></div>
+ </section>
+
+ <!-- HISTORY -->
+ <section id="historyView" class="hidden">
+  <div class="section-head"><div><h1>History</h1><p>Runs you've done in this browser.</p></div></div>
+  <div class="card history-list" id="historyList"></div>
+ </section>
+
+ <!-- SETTINGS -->
+ <section id="settingsView" class="hidden">
+  <div class="section-head"><div><h1>Connections</h1><p>How your teammates reach their AI models. In this demo nothing actually connects.</p></div></div>
+  <div class="card settings">
+   <div class="provider-row"><span class="avatar sm" style="--c:#16a37b"><svg aria-hidden="true"><use href="#i-code"/></svg></span><div><h3>Codex <span class="pill">Demo</span></h3><p>OpenAI's coding agent, run from the command line.</p><label class="field"><span class="sr-only">Codex command</span><input value="codex exec --json" readonly></label></div></div>
+   <div class="provider-row"><span class="avatar sm" style="--c:#e8664f"><svg aria-hidden="true"><use href="#i-spark"/></svg></span><div><h3>Claude <span class="pill">Demo</span></h3><p>Anthropic's agent, run from the command line.</p><label class="field"><span class="sr-only">Claude command</span><input value="claude --bare -p --output-format stream-json" readonly></label></div></div>
+   <div class="provider-row"><span class="avatar sm" style="--c:#4a63f0"><svg aria-hidden="true"><use href="#i-plug"/></svg></span><div><h3>Ollama <span class="pill">Demo</span></h3><p>Runs models privately on your own computer.</p><label class="field"><span class="sr-only">Ollama address</span><input id="ollamaEndpoint" value="http://localhost:11434/api"></label></div></div>
+   <div class="settings-foot"><button class="btn primary" id="saveConnection">Save</button></div>
+  </div>
+ </section>
+</main>
+
+<!-- Workspace dialog -->
+<dialog id="runSettings" aria-labelledby="runSettingsTitle">
+ <div class="dialog-head"><div><h2 id="runSettingsTitle">Workspace</h2><p>Where your team works, and what they're allowed to do.</p></div><button class="icon-btn" data-close="runSettings" aria-label="Close"><svg aria-hidden="true"><use href="#i-x"/></svg></button></div>
+ <div class="dialog-body">
+  <div class="field"><label for="workspacePath"><span>Project folder</span></label>
+   <div class="input-group"><input id="workspacePath" value="C:\Users\nashk\Documents\Projects\codexclipythondg" spellcheck="false"><button type="button" class="btn" id="browseButton"><svg aria-hidden="true"><use href="#i-folder"/></svg>Browse…</button></div>
+   <div class="recent hidden" id="recentFolders"></div>
+  </div>
+  <div class="form-row">
+   <label class="field"><span>Files</span><select id="sandbox"><option value="workspace-write">Can edit files</option><option value="read-only">Read only</option></select></label>
+   <label class="field"><span>Memory</span><select id="memory"><option>Remember past runs</option><option>Start fresh each time</option></select></label>
+  </div>
+ </div>
+ <div class="dialog-foot"><button class="btn" data-close="runSettings">Cancel</button><button class="btn primary" id="saveSettings">Save</button></div>
+</dialog>
+
+<!-- Folder browser -->
+<dialog id="folderDialog" aria-labelledby="folderTitle" style="width:min(760px,calc(100% - 32px))">
+ <div class="dialog-head"><div><h2 id="folderTitle">Choose a project folder</h2><p>Open folders to find your project, then press “Use this folder”.</p></div><button class="icon-btn" data-close="folderDialog" aria-label="Close"><svg aria-hidden="true"><use href="#i-x"/></svg></button></div>
+ <div class="dialog-body">
+  <div class="fb">
+   <nav class="places" id="places" aria-label="Places"></nav>
+   <div class="fb-main">
+    <div class="fb-bar">
+     <button class="icon-btn" id="folderUp" aria-label="Up one folder" title="Up one folder (Alt + ↑)"><svg aria-hidden="true"><use href="#i-up"/></svg></button>
+     <div class="crumbs" id="crumbs" aria-label="Current folder"></div>
+    </div>
+    <input class="fb-filter" id="folderFilter" placeholder="Filter folders…" aria-label="Filter folders" autocomplete="off">
+    <div class="folder-list" id="folderList" role="list"></div>
+   </div>
+  </div>
+ </div>
+ <div class="dialog-foot fb-foot">
+  <div class="fb-choice"><span class="tile"><svg aria-hidden="true"><use href="#i-folder"/></svg></span><span><strong id="folderChoiceName"></strong><small id="folderChoicePath"></small></span></div>
+  <button class="btn" data-close="folderDialog">Cancel</button><button class="btn primary" id="useFolder">Use this folder</button>
+ </div>
+</dialog>
+
+<!-- Teammate details (while running) -->
+<dialog id="detailDialog" aria-labelledby="detailName"><div id="detailBody"></div></dialog>
+
+<!-- Teammate editor -->
+<dialog id="editor" aria-labelledby="editorTitle">
+ <form id="agentForm" novalidate>
+  <div class="dialog-head"><span class="avatar lg" id="editorAvatar"></span><div><h2 id="editorTitle">New teammate</h2><p>Give them a name and one clear job.</p></div><button type="button" class="icon-btn" data-close="editor" aria-label="Close"><svg aria-hidden="true"><use href="#i-x"/></svg></button></div>
+  <div class="dialog-body">
+   <div class="form-row">
+    <label class="field"><span>Name</span><input id="agentName" autofocus maxlength="40" placeholder="e.g. Security checker" autocomplete="off"></label>
+    <label class="field"><span>Short description</span><input id="agentDescription" maxlength="50" placeholder="e.g. Looks for risky code" autocomplete="off"></label>
+   </div>
+   <label class="field"><span>What should they do?</span><small>Write it like you'd brief a colleague. What does a good result look like?</small><textarea id="agentPrompt" placeholder="Read the plan, look for anything that could break, and write down what you find."></textarea></label>
+   <div class="field"><span>Who does the work?</span>
+    <div class="choices" role="radiogroup" aria-label="Provider">
+     <label class="choice"><input type="radio" name="provider" value="Codex"><b>Codex</b><small>OpenAI's coding agent</small></label>
+     <label class="choice"><input type="radio" name="provider" value="Claude"><b>Claude</b><small>Anthropic's agent</small></label>
+     <label class="choice"><input type="radio" name="provider" value="Ollama"><b>Ollama</b><small>Private, on your computer</small></label>
+    </div>
+   </div>
+   <div class="field"><span>When they're finished</span>
+    <div class="choices" role="radiogroup" aria-label="When finished">
+     <label class="choice"><input type="radio" name="route" value="next"><b>Next in line</b><small id="routeNextHint">Pass to the next teammate</small></label>
+     <label class="choice"><input type="radio" name="route" value="choose"><b>Let them choose</b><small>Pick who they can pass to</small></label>
+     <label class="choice"><input type="radio" name="route" value="end"><b>End the run</b><small>Nobody goes after them</small></label>
+    </div>
+    <div class="targets hidden" id="targetPicker">
+     <p>They'll decide based on their work. For example, they could send it back if something needs fixing.</p>
+     <div class="target-list" id="targetList" role="group" aria-label="Can pass work to"></div>
+    </div>
+   </div>
+   <div class="field"><span>Additional required reports</span>
+    <small>Optional. Keep the usual Markdown notes and also create these files. Describe the report content in the job instructions above.</small>
+    <div class="form-row">
+     <label class="field"><span>HTML report filename</span><input id="agentHtml" placeholder="Optional, e.g. REPORT.html"></label>
+     <label class="field"><span>PDF report filename</span><input id="agentPdf" placeholder="Optional, e.g. REPORT.pdf"></label>
+    </div>
+   </div>
+   <details class="advanced" id="advancedAgent">
+    <summary>More options <small class="summary-hint">Look, model, file name</small><svg aria-hidden="true"><use href="#i-down"/></svg></summary>
+    <div class="advanced-body">
+     <div class="field"><span>Look</span><div class="look" id="lookPicker"></div></div>
+     <div class="form-row">
+      <label class="field"><span>Model</span><input id="agentModel" placeholder="Default model"></label>
+      <label class="field"><span>Saves its work as</span><input id="agentArtifact" placeholder="Based on the name" title="A Markdown filename, such as REVIEW.md"></label>
+     </div>
+     <div class="form-row">
+      <label class="field"><span>Thinking effort</span><select id="agentEffort"><option>Default</option><option>Low</option><option>Medium</option><option>High</option></select></label>
+     </div>
+    </div>
+   </details>
+  </div>
+  <div class="dialog-foot"><button type="button" class="btn ghost danger" id="removeAgent" style="margin-right:auto">Remove</button><button type="button" class="btn" data-close="editor">Cancel</button><button class="btn primary" type="submit">Save</button></div>
+ </form>
+</dialog>
+
+<!-- Save team as preset -->
+<dialog id="presetDialog" aria-labelledby="presetDialogTitle">
+ <form id="presetForm" novalidate>
+  <div class="dialog-head"><div><h2 id="presetDialogTitle">Save as a new team</h2><p>Keep this lineup so you can pick it again from the front page.</p></div><button type="button" class="icon-btn" data-close="presetDialog" aria-label="Close"><svg aria-hidden="true"><use href="#i-x"/></svg></button></div>
+  <div class="dialog-body">
+   <div class="mini-stack" id="presetDialogStack" style="margin-bottom:16px"></div>
+   <label class="field"><span>Team name</span><input id="presetName" autofocus maxlength="40" placeholder="e.g. Docs crew" autocomplete="off"></label>
+   <label class="field"><span>What's it for?</span><small>Shown under the name when picking a team.</small><input id="presetBlurb" maxlength="60" placeholder="e.g. Writes and checks documentation" autocomplete="off"></label>
+  </div>
+  <div class="dialog-foot"><button type="button" class="btn" data-close="presetDialog">Cancel</button><button class="btn primary" type="submit">Save team</button></div>
+ </form>
+</dialog>
+
+<!-- Reader -->
+<dialog id="reader" aria-labelledby="readerTitle" style="width:min(720px,calc(100% - 32px))">
+ <div class="dialog-head"><div><h2 id="readerTitle">Run log</h2><p id="readerSub"></p></div><button class="icon-btn" data-close="reader" aria-label="Close"><svg aria-hidden="true"><use href="#i-x"/></svg></button></div>
+ <div class="dialog-body" style="padding-bottom:24px"><pre id="readerContent"></pre></div>
+</dialog>
+
+<div class="runbar hidden" id="runBar" role="region" aria-label="Run controls">
+ <span class="runbar-avatar" id="runBarAvatar"></span>
+ <span class="runbar-text"><strong id="runBarTitle"></strong><small id="runBarSub"></small></span>
+ <button class="btn" id="runBarStop" aria-label="Stop run"><svg aria-hidden="true"><use href="#i-stop"/></svg><span class="runbar-label">Stop</span></button>
+ <button class="btn primary" id="runBarMain"></button>
+</div>
+<div class="toast hidden" id="toast" role="status"></div>
+
+<script>
+'use strict';
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const icon=(name,cls='')=>`<svg aria-hidden="true"${cls?` class="${cls}"`:''}><use href="#i-${name}"/></svg>`;
+
+const COLORS=['#4a63f0','#8b5cf6','#e8664f','#16a37b','#d48f00','#0e9fc0','#d64f8c'];
+const GLYPHS=['map','shield','code','check','book','search','bug','chat','spark','bot'];
+const PROVIDERS=['Codex','Claude','Ollama'];
+// [chip label, goal starter, team preset made for it]
+const SUGGESTIONS=[
+ ['Fix a bug','Find and fix the bug where ','bugfix'],
+ ['Add a feature','Add a feature that lets users ','feature'],
+ ['Review my code','Review this project and point out the biggest problems in ','audit'],
+ ['Research a topic','Find out ','research'],
+ ['Review a paper','Review the paper at ','paper'],
+ ['Write docs','Write clear, beginner-friendly documentation for ','default']
+];
+// Mirrors the presets in ../role_presets.json, with friendlier names and descriptions.
+const R=(id,name,description,glyph,provider,artifact,prompt,extra={})=>({id,name,description,glyph,provider,artifact,prompt,effort:'Default',...extra});
+const BUILTIN_PRESETS=[
+ {id:'default',name:'Plan & build',blurb:'Plan it, check it, build it, test it',roles:[
+  R('planner','Planner','Maps out the plan','map','Claude','PLAN.md','Look around the project and turn the goal into a concrete plan. Include the steps, any risks, and what each teammate should do.',{effort:'High'}),
+  R('reviewer','Reviewer','Pokes holes in the plan','shield','Codex','REVIEW.md','Read PLAN.md. Point out gaps and risks. If the plan needs work, send it back to the Planner; if it is ready, pass it to the Implementer.',{effort:'High',route:'choose',allowed:['planner','implementer']}),
+  R('implementer','Implementer','Writes the code','code','Codex','IMPLEMENTATION_NOTES.md','Read the plan and review. Make the smallest changes needed to reach the goal, and note what changed and what is left.',{effort:'High'}),
+  R('tester','Tester','Makes sure it works','check','Ollama','TEST_RESULTS.md','Run the right checks. Write down what you ran, what passed, what failed, and what to do next.'),
+  R('archivist','Archivist','Wraps it all up','book','Claude','SUMMARY.md','Read everything the team produced and write a short summary of the outcome and key decisions.')]},
+ {id:'feature',name:'Code a feature',blurb:'Spec, build, test and review a change',roles:[
+  R('spec','Spec Writer','Pins down what to build','map','Claude','SPEC.md','Look around the project and describe the exact change: scope, affected files, edge cases, and what is out of scope.',{effort:'High'}),
+  R('coder','Code Implementer','Writes the code','code','Codex','IMPLEMENTATION_NOTES.md','Read SPEC.md. Make the smallest changes that satisfy it, and note what changed and what is left.',{effort:'High'}),
+  R('testwriter','Test Writer','Tests the change','check','Codex','TEST_RESULTS.md','Read the spec and implementation notes. Run or write the right tests and record what passed and failed.'),
+  R('maint','Maintainability Reviewer',"Checks it'll be easy to live with",'search','Claude','MAINTAINABILITY_REVIEW.md','Inspect the actual diff, not just the summaries. Look for code in the wrong layer, duplication, and anything that will be hard to maintain.'),
+  R('codereview','Code Reviewer','Gives the final OK','shield','Claude','CODE_REVIEW.md','Read everything and the actual diff. Write findings and an approval status. If something must change, send it back to the Code Implementer.',{route:'choose',allowed:['coder']})]},
+ {id:'bugfix',name:'Fix a bug',blurb:'Find the real cause, fix it, prove it',roles:[
+  R('investigator','Bug Investigator','Finds the real cause','search','Claude','DIAGNOSIS.md','Reproduce the problem if you can, read the relevant code, and trace the root cause. Do not fix anything yet.',{effort:'High'}),
+  R('fixer','Bug Fixer','Fixes the root cause','bug','Codex','FIX_NOTES.md','Read DIAGNOSIS.md. Fix the root cause with the smallest real change. No workarounds that hide the problem.',{effort:'High'}),
+  R('verifier','Fix Verifier',"Proves it's fixed",'check','Codex','FIX_VERIFICATION.md','Re-run the original reproduction, then the test suite. If no test covered this bug, add one.'),
+  R('fixreview','Fix Reviewer','Double-checks the fix','shield','Claude','FIX_REVIEW.md','Check the fix addresses the root cause, look for side effects, and confirm the verification is convincing.')]},
+ {id:'audit',name:'Code audit',blurb:"Finds problems without changing anything",roles:[
+  R('scoper','Audit Scoper','Decides what to look at','map','Claude','AUDIT_SCOPE.md','Work out which files, modules and recent changes to review. Do not modify anything.'),
+  R('auditor','Code Auditor','Looks for problems','search','Codex','CODE_AUDIT_FINDINGS.md','Audit the code in scope. Read-only: do not modify files or create fixes. Record each finding with evidence.',{effort:'High'}),
+  R('auditreport','Audit Reporter','Writes up the report','book','Claude','CODE_AUDIT_REPORT.md','Write the final audit report: summary, scope, findings by severity, and recommended next steps. Do not modify files.')]},
+ {id:'research',name:'Research',blurb:'Answer a question with good sources',roles:[
+  R('rscope','Scoper','Frames the question','map','Claude','RESEARCH_SCOPE.md','Define the research question, what is already known, and what would count as a good answer.'),
+  R('rinvest','Investigator','Digs up sources','search','Claude','FINDINGS.md','Gather information from docs, sources or experiments, and write down what you found with sources.',{effort:'High'}),
+  R('analyst','Analyst','Makes sense of it all','spark','Codex','ANALYSIS.md','Analyse the findings: patterns, disagreements between sources, gaps, and what it all means.'),
+  R('reporter','Reporter','Writes the final report','book','Claude','RESEARCH_REPORT.md','Write a well-cited report answering the question, with open questions and suggested next steps.')]},
+ {id:'paper',name:'Paper review',blurb:'Summarise, critique and judge a paper',roles:[
+  R('psum','Summarizer','Sums up the paper','book','Claude','SUMMARY_OF_PAPER.md','Read the paper given in the goal and summarise its claims, methods, experiments and headline results.'),
+  R('critic','Critic','Finds the weak spots','shield','Claude','CRITIQUE.md','Identify weak methods, unsupported claims, missing comparisons and threats to validity.',{effort:'High'}),
+  R('repro','Reproducibility Checker','Checks it can be repeated','check','Codex','REPRODUCIBILITY.md','Assess whether the experiments and any released code or data can be reproduced, and what is missing.'),
+  R('synth','Synthesizer','Writes the verdict','spark','Claude','REVIEW_REPORT.md','Write the final review: strengths, weaknesses, and a recommendation with reasons.')]}
+].map(p=>({...p,builtin:true,roles:p.roles.map((r,i)=>normalize({...r,color:i},i))}));
+const FIELDS=['workspacePath','sandbox','memory','ollamaEndpoint'];
+const KEY='workbench-friendly-v4';
+
+// route: 'next' = next in line, 'choose' = picks from `allowed` (teammate ids), 'end' = ends the run.
+function normalize(a,i){
+ const route=['next','choose','end'].includes(a.route)?a.route:(a.handoff==='end'?'end':'next');
+ return {id:a.id||'agent-'+i+'-'+Date.now(),name:a.name,prompt:a.prompt,artifact:a.artifact,description:a.description||'',
+  provider:PROVIDERS.includes(a.provider)?a.provider:'Codex',model:a.model==='Provider default'?'':(a.model||''),
+  effort:a.effort||'Default',route,allowed:Array.isArray(a.allowed)?a.allowed.filter(x=>typeof x==='string'):[],
+  deliverables:Array.isArray(a.deliverables)?a.deliverables.filter(x=>typeof x==='string'):[],
+  glyph:GLYPHS.includes(a.glyph)?a.glyph:'bot',
+  color:Number.isInteger(a.color)?Math.abs(a.color)%COLORS.length:i%COLORS.length,status:'queued'};
+}
+// Drop links to teammates that no longer exist; "choose" with nobody left falls back to next in line.
+function cleanRoutes(){
+ const ids=new Set(agents.map(a=>a.id));
+ for(const a of agents){a.allowed=a.allowed.filter(id=>ids.has(id)&&id!==a.id);if(a.route==='choose'&&!a.allowed.length)a.route='next';}
+}
+const cloneRoles=roles=>roles.map(r=>({...r,allowed:[...r.allowed],deliverables:[...(r.deliverables||[])],status:'queued'}));
+const SNAP_KEYS=['id','name','prompt','artifact','description','provider','model','effort','route','allowed','glyph','color','deliverables'];
+const snap=roles=>JSON.stringify(roles.map(r=>SNAP_KEYS.map(k=>r[k])));
+const currentPreset=()=>presets.find(p=>p.id===presetId);
+const isEdited=()=>{const p=currentPreset();return !p||snap(agents)!==snap(p.roles);};
+const validRole=a=>a&&typeof a.name==='string'&&typeof a.prompt==='string'&&typeof a.artifact==='string';
+const targetsOf=a=>a.allowed.map(id=>agents.find(x=>x.id===id)).filter(Boolean);
+const orList=names=>names.length<2?names.join(''):names.slice(0,-1).join(', ')+' or '+names[names.length-1];
+function routeText(a,i){
+ if(a.route==='end')return'Ends the run';
+ if(a.route==='choose')return'Can pass to '+orList(targetsOf(a).map(t=>t.name));
+ return agents[i+1]?'Passes to '+agents[i+1].name:'Ends the run';
+}
+const sendsBack=(a,i)=>a.route==='choose'&&targetsOf(a).some(t=>agents.indexOf(t)<i);
+
+let recentFolders=[];
+let presets=BUILTIN_PRESETS.map(p=>({...p,roles:cloneRoles(p.roles)})),presetId='default';
+let agents=cloneRoles(presets[0].roles),history=[],events=[],artifacts=[];
+let flowOpen=null,staleRun=false,trail=new Set(),running=false,paused=false,waiting=false,current=0,runStarted=0,outcome=null,lastSeconds=0,timer=null,toastTimer=null,editing=-1,sentBack=new Set();
+
+try{
+ const s=JSON.parse(localStorage.getItem(KEY));
+ if(s){
+  if(Array.isArray(s.presets)){
+   const saved=s.presets.filter(p=>p&&typeof p.id==='string'&&typeof p.name==='string'&&Array.isArray(p.roles)&&p.roles.length&&p.roles.every(validRole))
+    .map(p=>({id:p.id,name:p.name,blurb:typeof p.blurb==='string'?p.blurb:'',builtin:!!p.builtin,roles:p.roles.map(normalize)}));
+   if(saved.length)presets=saved;
+  }
+  presetId=presets.some(p=>p.id===s.presetId)?s.presetId:presets[0].id;
+  agents=cloneRoles(currentPreset().roles);
+  if(Array.isArray(s.agents)&&s.agents.length&&s.agents.every(validRole))agents=s.agents.map(normalize);
+  if(typeof s.goal==='string')$('goal').value=s.goal;
+  for(const id of FIELDS)if(s[id])$(id).value=s[id];
+  $('autoAdvance').checked=s.autoAdvance!==false;
+  if(Array.isArray(s.history))history=s.history.slice(0,25);
+  if(typeof s.flowOpen==='boolean')flowOpen=s.flowOpen;
+  if(Array.isArray(s.recentFolders))recentFolders=s.recentFolders.filter(x=>typeof x==='string').slice(0,5);
+ }
+}catch{}
+cleanRoutes();
+
+function persist(){
+ try{
+  const strip=list=>list.map(({status,...a})=>a);
+  const s={presets:presets.map(p=>({...p,roles:strip(p.roles)})),presetId,agents:strip(agents),goal:$('goal').value,autoAdvance:$('autoAdvance').checked,history,recentFolders,flowOpen};
+  for(const id of FIELDS)s[id]=$(id).value;
+  localStorage.setItem(KEY,JSON.stringify(s));
+ }catch{notify('Your browser blocked saving. Use Export to keep your workflow.',false);}
+}
+function notify(message,ok=true){
+ const t=$('toast');t.innerHTML=(ok?icon('check'):'')+'<span>'+esc(message)+'</span>';
+ t.classList.remove('hidden');t.style.animation='none';t.offsetHeight;t.style.animation='';
+ clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.add('hidden'),3200);
+}
+const clock=()=>new Date().toLocaleTimeString([],{hour:'numeric',minute:'2-digit'});
+const colorOf=a=>COLORS[a.color];
+const avatar=(a,cls='')=>`<span class="avatar ${cls}" style="--c:${colorOf(a)}">${icon(a.glyph)}${a.status==='done'&&!cls?`<span class="badge">${icon('check')}</span>`:''}</span>`;
+const tagline=a=>a.description||'Teammate';
+
+function addEvent(title,body,{glyph='bot',color=null,artifact=-1}={}){events.push({title,body,glyph,color,artifact,time:clock()});renderFeed();}
+
+/* ---------- Rendering ---------- */
+function stateOf(a,i){
+ if(a.status==='done')return['done','Done'];
+ if(a.status==='running')return['working','Working'];
+ if(a.status==='paused')return['paused','Paused'];
+ if(a.status==='skipped')return['waiting','Skipped'];
+ if(running)return i===current&&waiting?['paused','Up next']:['waiting','Waiting'];
+ return['','Ready'];
+}
+
+function renderTeam(){
+ renderPresetPicker();
+ $('pipeline').innerHTML=agents.map((a,i)=>{
+  const[cls,label]=stateOf(a,i);
+  const last=i===agents.length-1;
+  return `<li class="relay-item"><button class="mate${cls==='working'?' is-working':''}${cls==='waiting'?' is-waiting':''}" style="--c:${colorOf(a)}" data-agent="${i}" aria-label="${esc(a.name)}, ${label}. ${running?'View details':'Edit'}">
+   <span class="mate-step">${i+1}</span>${avatar(a)}
+   <span class="mate-name">${esc(a.name)}</span><span class="mate-role">${esc(tagline(a))}</span>
+   ${a.route==='choose'||(a.route==='end'&&!last)?`<span class="mate-route">${icon(a.route==='end'?'stop':sendsBack(a,i)?'loop':'branch')}${esc(routeText(a,i))}</span>`:''}
+   <span class="mate-meta"><span class="pill">${esc(a.provider)}</span><span class="pill ${cls}">${label}</span></span>
+  </button>${last?'':`<span class="connector${a.status==='done'?' done':''}" aria-hidden="true">${icon(a.route==='end'?'stop':a.route==='choose'?'branch':'arrow')}</span>`}</li>`;
+ }).join('')+`<li class="relay-item add-item"><button class="mate add" data-add ${running?'disabled':''}><span class="plus">${icon('plus')}</span>Add teammate</button></li>`;
+}
+
+const miniStack=roles=>`<span class="mini-stack">${roles.slice(0,5).map(r=>avatar({...r,status:''})).join('')}</span>`;
+function renderPresetPicker(){
+ const p=currentPreset(),edited=isEdited();
+ $('presetButton').innerHTML=`${miniStack(agents)}<strong>${esc(p?p.name:'Custom team')}</strong>${edited&&p?'<span class="edited">Edited</span>':''}<small>${agents.length} teammates</small>${icon('down')}`;
+ $('presetButton').disabled=running;
+ $('presetMenu').innerHTML='<div class="menu-label">Choose a team</div>'
+  +presets.map(x=>`<button class="preset-option${x.id===presetId?' current':''}" role="menuitemradio" aria-checked="${x.id===presetId}" data-preset="${esc(x.id)}">${miniStack(x.roles)}<span><strong>${esc(x.name)}<small>${x.roles.length} teammates</small></strong><p>${esc(x.blurb||'Custom team')}</p></span>${x.id===presetId?icon('check','tick'):'<span></span>'}</button>`).join('')
+  +'<div class="menu-sep" role="separator"></div>'
+  +(edited&&p?`<button class="menu-action" role="menuitem" data-menu="save">${icon('check')}Save changes to “${esc(p.name)}”</button><button class="menu-action" role="menuitem" data-menu="undo">${icon('loop')}Undo my changes</button>`:'')
+  +`<button class="menu-action" role="menuitem" data-menu="saveas">${icon('plus')}Save as a new team…</button>`
+  +(p&&!p.builtin?`<button class="menu-action danger" role="menuitem" data-menu="delete">${icon('x')}Delete “${esc(p.name)}”</button>`:'');
+}
+function toggleMenu(open){
+ const m=$('presetMenu'),show=open??m.classList.contains('hidden');
+ m.classList.toggle('hidden',!show);$('presetButton').setAttribute('aria-expanded',show);
+ if(show)(m.querySelector('.current')||m.querySelector('button'))?.focus();
+}
+function loadPreset(id){
+ const p=presets.find(x=>x.id===id);
+ if(!p||running)return;
+ toggleMenu(false);hideTip();
+ if(id===presetId&&!isEdited())return;
+ if(isEdited()&&currentPreset()&&!confirm(`You have unsaved changes to “${currentPreset().name}”. Switch teams anyway?`))return;
+ presetId=id;agents=cloneRoles(p.roles);events=[];artifacts=[];outcome=null;staleRun=false;trail=new Set();
+ persist();render();notify(`Switched to the ${p.name} team.`);
+}
+function menuAction(action){
+ const p=currentPreset();toggleMenu(false);
+ if(action==='save'&&p){p.roles=cloneRoles(agents);persist();render();notify(`Saved changes to ${p.name}.`);}
+ if(action==='undo'&&p){agents=cloneRoles(p.roles);teamChanged();persist();render();notify('Changes undone.');}
+ if(action==='saveas'){$('presetName').value='';$('presetBlurb').value='';$('presetDialogStack').innerHTML=agents.slice(0,5).map(r=>avatar({...r,status:''})).join('');$('presetDialog').showModal();}
+ if(action==='delete'&&p&&!p.builtin&&confirm(`Delete the “${p.name}” team? This can't be undone.`)){
+  presets=presets.filter(x=>x!==p);presetId=presets[0].id;agents=cloneRoles(presets[0].roles);events=[];artifacts=[];outcome=null;staleRun=false;trail=new Set();persist();render();notify(`Deleted ${p.name}.`);
+ }
+ if(action==='restore'&&p?.builtin){
+  const orig=BUILTIN_PRESETS.find(x=>x.id===p.id);
+  if(orig&&confirm(`Put “${p.name}” back to how it came?`)){p.roles=cloneRoles(orig.roles);agents=cloneRoles(orig.roles);teamChanged();persist();render();notify(`${p.name} restored.`);}
+ }
+}
+function showTip(pid){
+ const p=presets.find(x=>x.id===pid);
+ if(!p||pid===presetId||running){hideTip();return;}
+ $('teamTip').innerHTML=`${icon('spark')}<span>The <b>${esc(p.name)}</b> team is made for this.</span><span class="tip-actions"><button class="btn primary" data-preset="${esc(p.id)}">Use this team</button><button class="icon-btn" data-tip-close aria-label="Dismiss">${icon('x')}</button></span>`;
+ $('teamTip').classList.remove('hidden');
+}
+function hideTip(){$('teamTip').classList.add('hidden');}
+
+/* ---------- Flow diagram ---------- */
+// Index -1 is Start, agents.length is Finish. Each edge is [from, to, kind] where kind is next | maybe.
+function flowEdges(){
+ const n=agents.length,edges=[[-1,0,'next']];
+ agents.forEach((a,i)=>{
+  if(a.route==='end'){edges.push([i,n,'next']);return;}
+  if(a.route==='next'){edges.push([i,i+1<n?i+1:n,'next']);return;}
+  const idx=targetsOf(a).map(t=>agents.indexOf(t));
+  idx.forEach(j=>edges.push([i,j,'maybe']));
+  if(!idx.some(j=>j>i))edges.push([i,n,'maybe']); // nobody later to pick, so they can finish the run
+ });
+ return edges;
+}
+function splitName(name){
+ if(name.length<=13||!name.includes(' '))return[name];
+ let best=0;for(let k=0;k<name.length;k++)if(name[k]===' '&&Math.abs(k-name.length/2)<Math.abs(best-name.length/2))best=k;
+ return[name.slice(0,best),name.slice(best+1)];
+}
+// Collapsed by default for a plain one-after-another team; open when there are choices or loops.
+function flowSummary(){
+ const n=agents.length,choose=agents.filter(a=>a.route==='choose').length,loops=agents.filter((a,i)=>sendsBack(a,i)).length,ends=agents.filter((a,i)=>a.route==='end'&&i<n-1).length;
+ if(!choose&&!ends)return`${n} steps, one after another`;
+ return[`${n} steps`,choose&&`${choose} choice${choose>1?'s':''}`,loops&&`${loops} loop${loops>1?'s':''}`,ends&&`${ends} early finish${ends>1?'es':''}`].filter(Boolean).join(' · ');
+}
+function renderFlowFrame(){
+ const open=flowOpen??agents.some(a=>a.route!=='next');
+ document.querySelector('.flow-wrap').classList.toggle('open',open);
+ $('flowToggle').setAttribute('aria-expanded',open);
+ $('flowSummary').textContent=flowSummary();
+}
+function renderFlow(){
+ renderFlowFrame();
+ const n=agents.length,PAD=10,GAP=40,PW=62,NW=156,NH=52,PH=32;
+ const nodeX=i=>i<0?PAD:PAD+PW+GAP+Math.min(i,n)*(NW+GAP);
+ const width=i=>i<0||i>=n?PW:NW;
+ const cx=i=>nodeX(i)+width(i)/2;
+ const edges=flowEdges();
+ const arcH=(i,j)=>22+14*(Math.abs(j-i)-1);
+ const above=edges.filter(([i,j])=>j<i),below=edges.filter(([i,j])=>j>i+1);
+ const top=above.length?Math.max(...above.map(([i,j])=>arcH(i,j)))+14:6;
+ const bottom=below.length?Math.max(...below.map(([i,j])=>arcH(i,j)))+14:6;
+ const W=nodeX(n)+PW+PAD,H=top+NH+bottom,cy=top+NH/2;
+ const botY=i=>i<0||i>=n?cy+PH/2:top+NH;
+ const live=running||outcome;
+ const walked=live?trail:new Set();
+ const col=i=>i>=0&&i<n?colorOf(agents[i]):'var(--accent)';
+ let svg='';
+ for(const[i,j,kind]of edges){
+  const back=j<i,cls=`fedge${kind==='maybe'?' maybe':''}${back?' back':''}${walked.has(i+'>'+j)?' walked':''}`;
+  let d,head;
+  if(j===i+1){
+   const x1=nodeX(i)+width(i),x2=nodeX(j)-2;
+   d=`M${x1} ${cy}L${x2-6} ${cy}`;head=`${x2-8},${cy-4.5} ${x2-8},${cy+4.5} ${x2},${cy}`;
+  }else if(back){
+   const sx=cx(i)-14,tx=cx(j)+14,y=top,k=arcH(i,j)/.75;
+   d=`M${sx} ${y}C${sx} ${y-k} ${tx} ${y-k} ${tx} ${y-7}`;head=`${tx-4.5},${y-8} ${tx+4.5},${y-8} ${tx},${y-1}`;
+  }else{
+   const sx=cx(i)+14,tx=cx(j)-(j>=n?0:14),sy=botY(i),ty=botY(j),k=arcH(i,j)/.75,base=Math.max(sy,ty);
+   d=`M${sx} ${sy}C${sx} ${base+k} ${tx} ${base+k} ${tx} ${ty+7}`;head=`${tx-4.5},${ty+8} ${tx+4.5},${ty+8} ${tx},${ty+1}`;
+  }
+  svg+=`<g class="${cls}" style="--c:${col(i)}"><path d="${d}"/><polygon points="${head}"/></g>`;
+ }
+ const pill=(i,label,cls)=>`<g class="fpill ${cls}"><rect x="${nodeX(i)}" y="${cy-PH/2}" width="${PW}" height="${PH}" rx="${PH/2}"/><text x="${cx(i)}" y="${cy+4}" text-anchor="middle">${label}</text></g>`;
+ svg+=pill(-1,'Start',running?'on':outcome==='done'?'done':'');
+ svg+=pill(n,'Finish',outcome==='done'?'done':'');
+ agents.forEach((a,i)=>{
+  const x=nodeX(i),st=live?(a.status==='running'||a.status==='paused'?'working':a.status==='done'?'done':a.status==='skipped'?'skipped':'waiting'):'';
+  const lines=splitName(a.name),tx=x+50,maxW=NW-60;
+  const text=lines.map((t,k)=>{const y=lines.length>1?cy-3+k*15:cy+5,est=t.length*(lines.length>1?6.6:7.3);
+   return `<text${lines.length>1?' class="two"':''} x="${tx}" y="${y}"${est>maxW?` textLength="${maxW}" lengthAdjust="spacingAndGlyphs"`:''}>${esc(t)}</text>`;}).join('');
+  svg+=`<g class="fnode ${st}" style="--c:${colorOf(a)}" data-flow-agent="${i}" role="button" tabindex="0" aria-label="${esc(a.name)}: ${esc(routeText(a,i))}">`
+   +`<rect class="halo" x="${x}" y="${top}" width="${NW}" height="${NH}" rx="14"/>`
+   +`<rect class="bg" x="${x}" y="${top}" width="${NW}" height="${NH}" rx="14"/>`
+   +`<rect class="ic" x="${x+11}" y="${cy-15}" width="30" height="30" rx="9"/>`
+   +`<use href="#i-${a.glyph}" x="${x+17}" y="${cy-9}" width="18" height="18"/>${text}`
+   +(a.status==='done'&&live?`<circle class="badge-dot" cx="${x+NW-6}" cy="${top+6}" r="9"/><use class="badge-use" href="#i-check" x="${x+NW-11.5}" y="${top+0.5}" width="11" height="11"/>`:'')
+   +`</g>`;
+ });
+ const desc='Start, then '+agents.map((a,i)=>`${a.name} (${routeText(a,i).toLowerCase()})`).join(', ')+'.';
+ $('flow').innerHTML=`<svg class="flow-svg" viewBox="0 0 ${W} ${H}" style="max-width:${W}px" role="group" aria-label="${esc(desc)}">${svg}</svg>`;
+}
+
+// After a run, changing the team keeps the old activity and results but marks them as from the last run.
+function teamChanged(){
+ if(running)return;
+ if(outcome||events.length)staleRun=true;
+ outcome=null;trail=new Set();
+}
+function clearRun(){events=[];artifacts=[];staleRun=false;outcome=null;trail=new Set();render();}
+function renderStale(){
+ const stale=staleRun&&!running&&(events.length||artifacts.length);
+ $('runGrid').classList.toggle('is-stale',!!stale);
+ const tag=`<span class="stale-tag">${icon('history')}From your last run</span> · before you changed the team`;
+ $('feedSub').innerHTML=stale?tag:'Step-by-step updates from your team';
+ $('resultsSub').innerHTML=stale?tag:'Everything your team made';
+ document.querySelectorAll('[data-clear-run]').forEach(b=>b.classList.toggle('hidden',!stale));
+}
+function renderStatus(){
+ const n=agents.length,done=agents.filter(a=>a.status==='done').length,a=agents[current];
+ let visual,head,help;
+ if(running&&paused){visual=avatar(a,'lg');head='Paused';help=`Nothing is lost. Press Continue and ${a.name} will pick up where they left off.`;}
+ else if(running&&waiting){visual=avatar(a,'lg');head=`Ready for ${a.name}`;help='Auto-continue is off, so your team is waiting for you. Take a look at the results first if you like.';}
+ else if(running){visual=avatar(a,'lg live');head=`${a.name} is working…`;help=`${tagline(a)} · Step ${current+1} of ${n}`;}
+ else if(outcome==='done'){visual=`<span class="done-mark">${icon('check')}</span>`;head='All done!';help=`Finished in ${lastSeconds}s with ${artifacts.length} result${artifacts.length===1?'':'s'} ready to read.`;}
+ else if(outcome==='stopped'){visual=`<span class="done-mark" style="background:var(--surface-2);color:var(--faint)">${icon('stop')}</span>`;head='Run stopped';help='Anything finished before you stopped is still in Results.';}
+ else{visual=`<span class="stack">${agents.slice(0,4).map(x=>avatar({...x,status:''})).join('')}</span>`;head='Your team is ready';help=staleRun&&(events.length||artifacts.length)?'You changed the team, so the last run is shown below for reference.':'Describe your goal above, then press Start.';}
+ $('statusVisual').innerHTML=visual;$('runHeadline').textContent=head;$('runHelp').textContent=help;
+ renderFlow();
+}
+
+let runButtonVisible=true;
+function renderRunBar(){
+ const show=running&&!runButtonVisible&&!$('homeView').classList.contains('hidden');
+ $('runBar').classList.toggle('hidden',!show);document.body.classList.toggle('has-runbar',show);
+ if(!show)return;
+ const a=agents[current];
+ $('runBarAvatar').innerHTML=avatar({...a,status:''},paused||waiting?'':'live');
+ $('runBarTitle').textContent=$('runHeadline').textContent;
+ $('runBarSub').textContent=paused||waiting?'Press Continue when you’re ready':`Step ${current+1} of ${agents.length}`;
+ $('runBarMain').innerHTML=$('runButton').innerHTML;
+}
+function renderButtons(){
+ const b=$('runButton');
+ if(!running)b.innerHTML=icon('play','fill')+(outcome?'Run again':'Start team');
+ else if(waiting)b.innerHTML=icon('play','fill')+'Continue with '+esc(agents[current].name);
+ else if(paused)b.innerHTML=icon('play','fill')+'Continue';
+ else b.innerHTML=icon('pause')+'Pause';
+ $('stopButton').classList.toggle('hidden',!running);
+ $('kbdHint').classList.toggle('hidden',running);
+ $('goal').readOnly=running;
+ document.querySelectorAll('[data-suggest],[data-add],#saveTeamAs').forEach(x=>x.disabled=running);
+ const p=currentPreset(),orig=p?.builtin&&BUILTIN_PRESETS.find(x=>x.id===p.id);
+ $('undoTeam').disabled=running||!p||!isEdited();
+ $('restoreTeam').classList.toggle('hidden',!(orig&&snap(p.roles)!==snap(orig.roles)));$('restoreTeam').disabled=running;
+ $('teamViewTitle').textContent=p?p.name:'Custom team';
+ $('teamViewBlurb').textContent=(p?.blurb?p.blurb+'. ':'')+(isEdited()&&p?'You have unsaved changes.':'Click Edit on anyone to change what they do.');
+ if(running){hideTip();toggleMenu(false);}
+ renderRunBar();
+}
+
+function renderFeed(){
+ const f=$('feed');
+ if(!events.length){
+  f.innerHTML=`<div class="empty"><div class="stack">${agents.slice(0,5).map(x=>avatar({...x,status:''})).join('')}</div><h3>Nothing happening yet</h3><p>Press Start and you'll see each teammate's progress here as it happens.</p></div>`;
+  return;
+ }
+ let html=events.map(e=>`<div class="event" style="--c:${e.color||'var(--accent)'}"><span class="dot">${icon(e.glyph)}</span><div><strong>${esc(e.title)}</strong><p>${esc(e.body)}</p>${e.artifact>=0&&artifacts[e.artifact]?`<button class="file-chip" data-artifact="${e.artifact}">${icon('file')}${esc(artifacts[e.artifact].name)}</button>`:''}</div><time>${esc(e.time)}</time></div>`).join('');
+ if(running&&!paused&&!waiting){const a=agents[current];html+=`<div class="event" style="--c:${colorOf(a)}"><span class="dot">${icon(a.glyph)}</span><div><strong>${esc(a.name)} is thinking</strong><span class="typing" aria-hidden="true"><span></span><span></span><span></span></span></div><time></time></div>`;}
+ f.innerHTML=html;f.scrollTop=f.scrollHeight;
+}
+
+function renderResults(){
+ $('artifactCount').textContent=artifacts.length;
+ $('results').innerHTML=artifacts.length?artifacts.map((r,i)=>`<div class="result" style="--c:${r.color}"><span class="file-tile">${icon('file')}</span><div><strong>${esc(r.name)}</strong><p>From ${esc(r.agent)} · ${esc(r.time)}${r.version>1?` · version ${r.version}`:''}</p></div><button class="btn" data-artifact="${i}">${icon('eye')}Open</button></div>`).join('')
+  :`<div class="empty"><span class="glyph">${icon('file')}</span><h3>Results show up here</h3><p>Each teammate saves what they make — plans, reviews, notes — so you can read it any time.</p></div>`;
+}
+
+function renderTeamGrid(){
+ $('teamGrid').innerHTML=agents.map((a,i)=>`<article class="card team-card" style="--c:${colorOf(a)}">
+  <div class="team-card-top">${avatar({...a,status:''},'lg')}<div><h3>${esc(a.name)}</h3><p>${esc(tagline(a))}</p></div><span class="step">Step ${i+1}</span></div>
+  <div class="quote">${esc(a.prompt)}</div>
+  <div class="mate-meta"><span class="pill">${esc(a.provider)}</span><span class="pill">${icon('file')}${esc(a.artifact)}</span>${(a.deliverables||[]).map(name=>`<span class="pill">${icon('file')}${esc(name)}</span>`).join('')}${a.effort!=='Default'?`<span class="pill">${esc(a.effort)} effort</span>`:''}</div>
+  <div class="team-card-foot"><span class="mate-route" style="margin:0">${icon(a.route==='end'||(a.route==='next'&&!agents[i+1])?'stop':a.route==='choose'?(sendsBack(a,i)?'loop':'branch'):'arrow')}${esc(routeText(a,i))}</span><button class="btn" data-edit="${i}" ${running?'disabled':''}>${icon('pencil')}Edit</button></div>
+ </article>`).join('')+`<button class="mate add" data-add ${running?'disabled':''}><span class="plus">${icon('plus')}</span>Add teammate</button>`;
+}
+
+function renderHistory(){
+ $('historyList').innerHTML=history.length?history.map(h=>`<div class="history-row"><span class="ok${h.stopped?' stopped':''}">${icon(h.stopped?'stop':'check')}</span><div><strong>${esc(h.goal)}</strong><p>${h.team?esc(h.team)+' · ':''}${esc(h.date)} · ${h.count} result${h.count===1?'':'s'} · ${h.seconds}s</p></div><span class="pill ${h.stopped?'':'done'}">${h.stopped?'Stopped':'Finished'}</span></div>`).join('')
+  :`<div class="empty"><span class="glyph">${icon('history')}</span><h3>No runs yet</h3><p>Once your team finishes a run, it'll be listed here.</p></div>`;
+}
+
+function render(){renderTeam();renderStatus();renderButtons();renderResults();renderTeamGrid();renderFeed();renderStale();}
+
+/* ---------- Run simulation ---------- */
+function startRun(){
+ if(!$('goal').value.trim()){notify('Tell your team what to work on first.',false);$('goal').focus();return;}
+ persist();
+ running=true;paused=false;waiting=false;outcome=null;current=0;runStarted=Date.now();events=[];artifacts=[];staleRun=false;sentBack=new Set();trail=new Set(['-1>0']);
+ agents.forEach(a=>a.status='queued');
+ showView('home');
+ addEvent('Run started',`Your team of ${agents.length} is getting to work on your goal.`,{glyph:'play'});
+ startAgent();
+}
+function startAgent(){
+ if(!running||paused)return;
+ waiting=false;const a=agents[current];a.status='running';
+ addEvent(`${a.name} picked it up`,tagline(a)+'.',{glyph:a.glyph,color:colorOf(a)});
+ render();timer=setTimeout(completeAgent,2600);
+}
+function completeAgent(){
+ if(!running||paused)return;
+ const a=agents[current];a.status='done';
+ // A teammate who runs again (after a send-back) updates their result instead of adding a duplicate.
+ let r=artifacts.findIndex(x=>x.agentId===a.id);
+ const version=r>=0?artifacts[r].version+1:1;
+ const result={name:a.artifact,agent:a.name,agentId:a.id,color:colorOf(a),time:clock(),version,body:`# ${a.name}${version>1?` (version ${version})`:''}\n\nGoal: ${$('goal').value}\n\nInstructions:\n${a.prompt}\n\n---\nThis is a pretend result for the interface demo. No files or commands were touched.`};
+ if(r>=0)artifacts[r]=result;else{artifacts.push(result);r=artifacts.length-1;}
+ addEvent(`${a.name} finished${version>1?` (round ${version})`:''}`,version>1?'Updated their work based on the feedback.':'Saved their work for the rest of the team.',{glyph:'check',color:colorOf(a),artifact:r});
+ const pick=pickNext(a,current);
+ if(pick.index<0){
+  trail.add(current+'>'+agents.length);
+  if(pick.chose)addEvent(`${a.name} decided the work is done`,'Happy with the result, so the run ends here.',{glyph:'stop',color:colorOf(a)});
+  finishRun(false);return;
+ }
+ const from=current;current=pick.index;const next=agents[current];
+ trail.add(from+'>'+current);
+ if(current<from)for(let k=current;k<=from;k++)agents[k].status='queued';        // going back: those steps run again
+ else for(let k=from+1;k<current;k++)agents[k].status='skipped';                  // jumping ahead: mark the ones in between
+ if(pick.back)addEvent(`${a.name} sent it back to ${next.name}`,'Found something that needs fixing first.',{glyph:'loop',color:colorOf(next)});
+ else if(pick.chose)addEvent(`${a.name} chose ${next.name}`,`Picked from ${orList(targetsOf(a).map(t=>t.name))}.`,{glyph:'branch',color:colorOf(next)});
+ else addEvent(`Handed over to ${next.name}`,`${a.name} passed their notes along.`,{glyph:'arrow',color:colorOf(next)});
+ if($('autoAdvance').checked)timer=setTimeout(startAgent,900);
+ else{waiting=true;addEvent('Your turn','Auto-continue is off. Have a look, then press Continue.',{glyph:'clock'});}
+ render();
+}
+// Demo stand-in for the agent's own decision: send back once (to the earliest allowed teammate), then move forward.
+function pickNext(a,i){
+ if(a.route==='end')return{index:-1};
+ if(a.route==='next')return{index:i+1<agents.length?i+1:-1};
+ const idx=targetsOf(a).map(t=>agents.indexOf(t)).filter(j=>j!==i).sort((x,y)=>x-y);
+ const back=idx.filter(j=>j<i),fwd=idx.filter(j=>j>i);
+ if(back.length&&!sentBack.has(a.id)){sentBack.add(a.id);return{index:back[0],back:true};}
+ return{index:fwd.length?fwd[0]:-1,chose:true};
+}
+function finishRun(stopped){
+ clearTimeout(timer);
+ lastSeconds=Math.max(1,Math.round((Date.now()-runStarted)/1000));
+ running=paused=waiting=false;outcome=stopped?'stopped':'done';
+ agents.forEach(a=>{if(a.status!=='done')a.status='queued';});
+ history.unshift({goal:$('goal').value.trim(),team:currentPreset()?.name||'Custom team',date:new Date().toLocaleString([],{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}),count:artifacts.length,seconds:lastSeconds,stopped});
+ history=history.slice(0,25);persist();
+ if(stopped)addEvent('Run stopped','You stopped the run. Finished work is kept.',{glyph:'stop'});
+ else{addEvent('All done!',`Your team finished in ${lastSeconds}s.`,{glyph:'spark'});notify('All done! Your results are ready.');}
+ render();renderHistory();
+}
+function primaryAction(){
+ if(!running)return startRun();
+ if(waiting)return startAgent();
+ const a=agents[current];
+ paused=!paused;
+ if(paused){clearTimeout(timer);if(a.status==='running')a.status='paused';addEvent('Paused','Take your time — press Continue when you\'re ready.',{glyph:'pause'});}
+ else{a.status='running';addEvent('Back to it',`${a.name} is carrying on.`,{glyph:'play',color:colorOf(a)});timer=setTimeout(completeAgent,1800);}
+ render();
+}
+
+/* ---------- Dialogs ---------- */
+function buildLookPicker(){
+ $('lookPicker').innerHTML=GLYPHS.map(g=>`<label><input type="radio" name="glyph" value="${g}" aria-label="${g} icon"><span class="glyph-opt">${icon(g)}</span></label>`).join('')
+  +'<span class="look-divider" aria-hidden="true"></span>'
+  +COLORS.map((c,i)=>`<label style="--c:${c}"><input type="radio" name="color" value="${i}" aria-label="Color ${i+1}"><span class="swatch"></span></label>`).join('');
+}
+function updateEditorAvatar(){
+ const f=$('agentForm').elements;
+ $('editorAvatar').style.setProperty('--c',COLORS[Number(f.color.value)||0]);
+ $('editorAvatar').innerHTML=icon(f.glyph.value||'bot');
+}
+function openEditor(index=-1){
+ if(running)return;
+ editing=index;const a=agents[index],f=$('agentForm').elements;
+ $('editorTitle').textContent=a?'Edit '+a.name:'New teammate';
+ $('agentName').value=a?.name||'';$('agentDescription').value=a?.description||'';$('agentPrompt').value=a?.prompt||'';
+ f.provider.value=a?.provider||'Codex';
+ f.glyph.value=a?.glyph||GLYPHS[agents.length%GLYPHS.length];
+ f.color.value=String(a?a.color:agents.length%COLORS.length);
+ $('agentModel').value=a?.model||'';$('agentArtifact').value=a?.artifact||'';
+ $('agentHtml').value=a?.deliverables?.find(x=>x.endsWith('.html'))||'';
+ $('agentPdf').value=a?.deliverables?.find(x=>x.endsWith('.pdf'))||'';
+ $('agentEffort').value=a?.effort||'Default';
+ f.route.value=a?.route||'next';
+ const pos=a?index:agents.length,after=agents[pos+1];
+ $('routeNextHint').textContent=a&&after?'Pass to '+after.name:"They're last, so the run ends";
+ $('targetList').innerHTML=agents.map((t,j)=>j===index?'':`<label class="target"><input type="checkbox" value="${esc(t.id)}" ${a?.allowed.includes(t.id)?'checked':''}>${avatar({...t,status:''})}${esc(t.name)}<small>${j<pos?'sends back':'later'}</small>${icon('check','tick')}</label>`).join('');
+ updateRoutePicker();
+ $('advancedAgent').open=false;
+ $('removeAgent').classList.toggle('hidden',!a||agents.length===1);
+ updateEditorAvatar();$('editor').showModal();
+}
+function updateRoutePicker(){
+ const choose=$('agentForm').elements.route.value==='choose';
+ $('targetPicker').classList.toggle('hidden',!choose);
+ // Ticking someone is the obvious next step, so pre-select the next teammate if nothing is ticked yet.
+ const boxes=[...$('targetList').querySelectorAll('input')];
+ if(choose&&boxes.length&&!boxes.some(b=>b.checked)){const pos=editing<0?agents.length:editing,nb=agents[pos+1];const box=nb&&boxes.find(b=>b.value===nb.id);if(box)box.checked=true;}
+}
+function openDetail(i){
+ const a=agents[i];
+ $('detailBody').innerHTML=`<div class="dialog-head">${avatar({...a,status:''},'lg')}<div><h2 id="detailName">${esc(a.name)}</h2><p>${esc(tagline(a))}</p></div><button class="icon-btn" data-close="detailDialog" aria-label="Close">${icon('x')}</button></div>
+ <div class="dialog-body"><div class="info-grid"><div><label>Who does the work</label><strong>${esc(a.provider)}</strong></div><div><label>Model</label><strong>${esc(a.model||'Default model')}</strong></div><div><label>Saves its work as</label><strong>${esc(a.artifact)}</strong></div><div><label>When finished</label><strong>${esc(routeText(a,i))}</strong></div></div>
+ <span class="label">Instructions</span><div class="quote" style="-webkit-line-clamp:unset;margin-top:6px">${esc(a.prompt)}</div><p style="font-size:13.5px">You can edit teammates once the run is finished or stopped.</p></div><div class="dialog-foot"><button class="btn" data-close="detailDialog">Close</button></div>`;
+ $('detailDialog').showModal();
+}
+function openReader(title,sub,body){$('readerTitle').textContent=title;$('readerSub').textContent=sub;$('readerContent').textContent=body;$('reader').showModal();}
+
+/* ---------- Views ---------- */
+function showView(view){
+ for(const v of ['home','team','history','settings'])$(v+'View').classList.toggle('hidden',v!==view);
+ document.querySelectorAll('.nav [data-view]').forEach(b=>{const on=b.dataset.view===view;b.classList.toggle('active',on);on?b.setAttribute('aria-current','page'):b.removeAttribute('aria-current');});
+ window.scrollTo({top:0});renderRunBar();
+}
+/* ---------- Folder browser ----------
+   A web page can't see real paths, so the real app would ask its local Python server:
+   listFolders(path) -> fetch('/api/folders?path=...') returning [{name, git}].
+   This demo browses a pretend folder tree instead. */
+const HOME='C:\\Users\\nashk';
+const DEMO_FS={'C:':{Users:{nashk:{
+ Desktop:{},Downloads:{},Music:{},Pictures:{},Videos:{},
+ Documents:{'Visual Studio 2022':{},Projects:{
+  codexclipythondg:{artifacts:{},docs:{},legacy:{},mockup:{},scripts:{},tests:{}},
+  DragonGui:{docs:{},dragongui:{},examples:{},tests:{}},
+  Godot:{},LLMMemory:{data:{},notebooks:{}},
+  MachinOS:{boot:{},kernel:{},tools:{}},MOSTheme:{assets:{},themes:{}},
+  PyLDS:{pylds:{},tests:{}},VSCode:{}}}}},
+ 'Program Files':{},Windows:{}}};
+const DEMO_GIT=new Set(['Projects\\codexclipythondg','Projects\\DragonGui','Projects\\MachinOS','Projects\\MOSTheme','Projects\\PyLDS'].map(x=>HOME+'\\Documents\\'+x));
+const joinPath=segs=>segs.length===1?segs[0]+'\\':segs.join('\\');
+const splitPath=str=>str.trim().replace(/\//g,'\\').split('\\').filter(Boolean);
+function nodeAt(segs){let n=DEMO_FS;for(const x of segs){const k=Object.keys(n).find(k=>k.toLowerCase()===String(x).toLowerCase());if(k===undefined)return null;n=n[k];}return n;}
+function listFolders(segs){
+ const n=nodeAt(segs)||{};
+ return Object.keys(n).filter(name=>!name.startsWith('.')&&!name.startsWith('__')).sort((a,b)=>a.localeCompare(b,undefined,{sensitivity:'base'}))
+  .map(name=>({name,git:DEMO_GIT.has(joinPath([...segs,name]))}));
+}
+// Use the real casing from the tree, and fall back to the nearest folder that exists.
+function resolveFolder(str){
+ let segs=splitPath(str),out=[],n=DEMO_FS;
+ for(const x of segs){const k=Object.keys(n).find(k=>k.toLowerCase()===x.toLowerCase());if(k===undefined)break;out.push(k);n=n[k];}
+ return out.length?out:splitPath(HOME);
+}
+let fbPath=[];
+const PLACES=[['Home','home',HOME],['Desktop','desktop',HOME+'\\Desktop'],['Documents','file',HOME+'\\Documents'],['Downloads','download',HOME+'\\Downloads'],['Projects','code',HOME+'\\Documents\\Projects']];
+function renderFolderBrowser(focusList=false){
+ const here=joinPath(fbPath),filter=$('folderFilter').value.trim().toLowerCase();
+ $('places').innerHTML='<h3>Places</h3>'+PLACES.map(([label,ic,path])=>`<button data-goto="${esc(path)}" class="${here===path?'on':''}">${icon(ic)}${label}</button>`).join('')
+  +(recentFolders.length?'<h3>Recent</h3>'+recentFolders.map(path=>`<button data-goto="${esc(path)}" class="${here===path?'on':''}" title="${esc(path)}">${icon('history')}${esc(splitPath(path).pop())}</button>`).join(''):'');
+ $('crumbs').innerHTML=fbPath.map((seg,i)=>`${i?icon('chev'):''}<button data-crumb="${i}" ${i===fbPath.length-1?'aria-current="location"':''}>${esc(seg)}</button>`).join('');
+ $('folderUp').disabled=fbPath.length<=1;
+ const all=listFolders(fbPath),items=all.filter(f=>f.name.toLowerCase().includes(filter));
+ $('folderList').innerHTML=items.length?items.map(f=>`<div class="folder-row" role="listitem"><button class="folder-open" data-open="${esc(f.name)}" aria-label="Open ${esc(f.name)}"><span class="ficon">${icon('folder')}</span><span class="fname">${esc(f.name)}</span>${f.git?`<span class="git-pill">${icon('git')}Git</span>`:''}${icon('chev')}</button><button class="btn use" data-use="${esc(f.name)}">Use</button></div>`).join('')
+  :`<div class="folder-empty"><div>${all.length?'No folders match that filter.':'No folders in here.'}<br><small style="color:var(--faint)">${all.length?'':'You can still use this folder.'}</small></div></div>`;
+ const git=DEMO_GIT.has(here);
+ $('folderChoiceName').innerHTML=esc(fbPath[fbPath.length-1]||'')+(git?`<span class="git-pill">${icon('git')}Git</span>`:'');
+ $('folderChoicePath').textContent=here;$('folderChoicePath').title=here;
+ if(focusList)($('folderList').querySelector('.folder-open')||$('folderUp')).focus();
+}
+function goFolder(segs,focusList=true){fbPath=segs;$('folderFilter').value='';renderFolderBrowser(focusList);$('folderList').scrollTop=0;}
+function openFolderBrowser(){fbPath=resolveFolder($('workspacePath').value);$('folderFilter').value='';renderFolderBrowser();$('folderDialog').showModal();($('folderList').querySelector('.folder-open')||$('folderFilter')).focus();}
+function chooseFolder(segs){
+ const path=joinPath(segs);
+ $('workspacePath').value=path;$('folderDialog').close();renderRecent();
+ notify(`Picked ${segs[segs.length-1]}. Press Save to keep it.`);
+}
+function renderRecent(){
+ const cur=$('workspacePath').value.trim().toLowerCase(),list=recentFolders.filter(x=>x.toLowerCase()!==cur);
+ $('recentFolders').classList.toggle('hidden',!list.length);
+ $('recentFolders').innerHTML='<span>Recent:</span>'+list.map(path=>`<button type="button" class="chip" data-recent="${esc(path)}" title="${esc(path)}">${esc(splitPath(path).pop())}</button>`).join('');
+}
+function rememberFolder(path){recentFolders=[path,...recentFolders.filter(x=>x.toLowerCase()!==path.toLowerCase())].slice(0,5);}
+
+function updateWorkspace(){
+ $('workspaceName').textContent=$('workspacePath').value.trim().split(/[\\/]/).filter(Boolean).pop()||'Choose a folder';
+ $('workspaceAccess').textContent=$('sandbox').selectedOptions[0].text+' · '+$('memory').value;
+}
+function applyTheme(t){document.documentElement.dataset.theme=t;$('themeToggle').innerHTML=icon(t==='dark'?'sun':'moon');$('themeToggle').setAttribute('aria-label',t==='dark'?'Switch to light theme':'Switch to dark theme');}
+
+/* ---------- Events ---------- */
+document.addEventListener('click',e=>{
+ const b=e.target.closest('button');if(!b||b.disabled)return;
+ if(b.dataset.view)showView(b.dataset.view);
+ if(b.dataset.close)$(b.dataset.close).close();
+ if(b.dataset.agent!==undefined){const i=Number(b.dataset.agent);running?openDetail(i):openEditor(i);}
+ if(b.dataset.edit!==undefined)openEditor(Number(b.dataset.edit));
+ if(b.hasAttribute('data-add'))openEditor();
+ if(b.dataset.artifact!==undefined){const r=artifacts[Number(b.dataset.artifact)];if(r)openReader(r.name,'Made by '+r.agent+' · '+r.time,r.body);}
+ if(b.dataset.preset)loadPreset(b.dataset.preset);
+ if(b.dataset.menu)menuAction(b.dataset.menu);
+ if(b.hasAttribute('data-tip-close'))hideTip();
+ if(b.dataset.suggest!==undefined){const[,starter,pid]=SUGGESTIONS[Number(b.dataset.suggest)],g=$('goal');g.value=starter;showTip(pid);g.focus();g.setSelectionRange(g.value.length,g.value.length);persist();}
+});
+const openAgent=i=>running?openDetail(i):openEditor(i);
+$('flow').addEventListener('click',e=>{const g=e.target.closest('[data-flow-agent]');if(g)openAgent(Number(g.dataset.flowAgent));});
+$('flow').addEventListener('keydown',e=>{const g=e.target.closest('[data-flow-agent]');if(g&&(e.key==='Enter'||e.key===' ')){e.preventDefault();openAgent(Number(g.dataset.flowAgent));}});
+$('flowToggle').onclick=()=>{flowOpen=!document.querySelector('.flow-wrap').classList.contains('open');renderFlowFrame();persist();};
+$('runBarMain').onclick=primaryAction;
+$('runBarStop').onclick=()=>finishRun(true);
+// Show the sticky run bar once the main run button has scrolled off screen.
+let runBarFrame=0;
+function checkRunButton(){
+ runBarFrame=0;const r=$('runButton').getBoundingClientRect(),topbar=document.querySelector('.topbar').offsetHeight;
+ const vis=r.bottom>topbar&&r.top<innerHeight;
+ if(vis!==runButtonVisible){runButtonVisible=vis;renderRunBar();}
+}
+addEventListener('scroll',()=>{if(!runBarFrame)runBarFrame=requestAnimationFrame(checkRunButton);},{passive:true});
+addEventListener('resize',checkRunButton);
+document.addEventListener('click',e=>{if(e.target.closest('[data-clear-run]'))clearRun();});
+// Click outside a dialog to close it.
+document.querySelectorAll('dialog').forEach(d=>d.addEventListener('click',e=>{if(e.target===d)d.close();}));
+
+$('agentForm').addEventListener('change',e=>{if(['glyph','color'].includes(e.target.name))updateEditorAvatar();if(e.target.name==='route')updateRoutePicker();});
+$('agentForm').onsubmit=e=>{
+ e.preventDefault();
+ const f=$('agentForm').elements,name=$('agentName').value.trim(),prompt=$('agentPrompt').value.trim();
+ if(!name){notify('Give your teammate a name.',false);$('agentName').focus();return;}
+ if(!prompt){notify('Tell your teammate what to do.',false);$('agentPrompt').focus();return;}
+ if(agents.some((a,i)=>i!==editing&&a.name.toLowerCase()===name.toLowerCase())){notify('Someone on the team already has that name.',false);$('agentName').focus();return;}
+ let artifact=$('agentArtifact').value.trim();
+ if(artifact&&!/^[A-Za-z0-9_.-]+\.md$/.test(artifact)){$('advancedAgent').open=true;notify('Use a simple file name ending in .md, like REVIEW.md',false);$('agentArtifact').focus();return;}
+ if(!artifact)artifact=(name.toUpperCase().replace(/[^A-Z0-9]+/g,'_').replace(/^_+|_+$/g,'')||'NOTES')+'.md';
+ const route=f.route.value||'next',allowed=route==='choose'?[...$('targetList').querySelectorAll('input:checked')].map(b=>b.value):[];
+ if(route==='choose'&&!allowed.length){notify('Pick at least one teammate they can pass to.',false);$('targetList').querySelector('input')?.focus();return;}
+ const deliverables=[$('agentHtml').value.trim(),$('agentPdf').value.trim()].filter(Boolean);
+ for(const [id,extension] of [['agentHtml','html'],['agentPdf','pdf']]){
+  const value=$(id).value.trim();
+  if(value&&!(new RegExp('^[A-Za-z0-9_][A-Za-z0-9_.-]*\\.'+extension+'$')).test(value)){notify('Use a simple filename ending in .'+extension,false);$(id).focus();return;}
+ }
+ const filenames=[artifact,...deliverables].map(x=>x.toLowerCase());
+ if(agents.some((a,i)=>i!==editing&&[a.artifact,...(a.deliverables||[])].some(x=>filenames.includes(x.toLowerCase())))){notify('Another teammate already uses one of these filenames.',false);return;}
+ const a={...(agents[editing]||{id:'agent-'+Date.now(),status:'queued'}),name,prompt,artifact,deliverables,
+  description:$('agentDescription').value.trim(),provider:f.provider.value||'Codex',model:$('agentModel').value.trim(),
+  effort:$('agentEffort').value,route,allowed,glyph:f.glyph.value||'bot',color:Number(f.color.value)||0};
+ if(editing<0)agents.push(a);else agents[editing]=a;
+ teamChanged();cleanRoutes();persist();render();$('editor').close();
+ notify(editing<0?`${name} joined the team.`:`${name} updated.`);
+};
+$('removeAgent').onclick=()=>{
+ if(editing<0||agents.length<2)return;
+ const [gone]=agents.splice(editing,1);teamChanged();cleanRoutes();persist();render();$('editor').close();notify(`${gone.name} left the team.`);
+};
+$('undoTeam').onclick=()=>menuAction('undo');
+$('restoreTeam').onclick=()=>menuAction('restore');
+$('saveTeamAs').onclick=()=>menuAction('saveas');
+$('presetButton').onclick=e=>{e.stopPropagation();toggleMenu();};
+$('presetMenu').addEventListener('keydown',e=>{
+ const items=[...$('presetMenu').querySelectorAll('button')],i=items.indexOf(document.activeElement);
+ if(e.key==='Escape'){e.preventDefault();toggleMenu(false);$('presetButton').focus();}
+ if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();items[(i+(e.key==='ArrowDown'?1:-1)+items.length)%items.length].focus();}
+});
+document.addEventListener('click',e=>{if(!e.target.closest('.preset-wrap'))toggleMenu(false);});
+$('presetForm').onsubmit=e=>{
+ e.preventDefault();
+ const name=$('presetName').value.trim();
+ if(!name){notify('Give your team a name.',false);$('presetName').focus();return;}
+ if(presets.some(p=>p.name.toLowerCase()===name.toLowerCase())){notify('You already have a team with that name.',false);$('presetName').focus();return;}
+ const p={id:'team-'+Date.now(),name,blurb:$('presetBlurb').value.trim(),builtin:false,roles:cloneRoles(agents)};
+ presets.push(p);presetId=p.id;persist();render();$('presetDialog').close();notify(`Saved “${name}”. Pick it any time from Your team.`);
+};
+$('runButton').onclick=primaryAction;
+$('stopButton').onclick=()=>finishRun(true);
+$('goal').addEventListener('keydown',e=>{if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){e.preventDefault();primaryAction();}});
+$('goal').onchange=persist;$('autoAdvance').onchange=persist;
+// Workspace dialog: Cancel (or Esc) puts back whatever was there when it opened.
+let settingsBefore=null;
+$('openSettings').onclick=()=>{settingsBefore=['workspacePath','sandbox','memory'].map(id=>$(id).value);renderRecent();$('runSettings').showModal();};
+$('runSettings').addEventListener('close',()=>{if(settingsBefore)['workspacePath','sandbox','memory'].forEach((id,i)=>$(id).value=settingsBefore[i]);settingsBefore=null;});
+$('saveSettings').onclick=()=>{
+ const path=$('workspacePath').value.trim();
+ if(!path){notify('Choose a project folder first.',false);$('workspacePath').focus();return;}
+ rememberFolder(path);settingsBefore=null;persist();updateWorkspace();$('runSettings').close();notify('Workspace saved.');
+};
+$('workspacePath').addEventListener('input',renderRecent);
+$('browseButton').onclick=openFolderBrowser;
+$('recentFolders').addEventListener('click',e=>{const b=e.target.closest('[data-recent]');if(b){$('workspacePath').value=b.dataset.recent;renderRecent();}});
+$('folderDialog').addEventListener('click',e=>{
+ const b=e.target.closest('button');if(!b)return;
+ if(b.dataset.open!==undefined)goFolder([...fbPath,b.dataset.open]);
+ if(b.dataset.use!==undefined)chooseFolder([...fbPath,b.dataset.use]);
+ if(b.dataset.crumb!==undefined)goFolder(fbPath.slice(0,Number(b.dataset.crumb)+1),false);
+ if(b.dataset.goto!==undefined)goFolder(resolveFolder(b.dataset.goto),false);
+});
+$('folderUp').onclick=()=>{if(fbPath.length>1)goFolder(fbPath.slice(0,-1));};
+$('folderDialog').addEventListener('keydown',e=>{
+ if(e.altKey&&e.key==='ArrowUp'){e.preventDefault();$('folderUp').click();}
+ if(e.key==='Backspace'&&e.target.tagName!=='INPUT'){e.preventDefault();$('folderUp').click();}
+});
+$('folderFilter').addEventListener('input',()=>renderFolderBrowser());
+$('folderFilter').addEventListener('keydown',e=>{if(e.key==='ArrowDown'){e.preventDefault();$('folderList').querySelector('.folder-open')?.focus();}});
+$('useFolder').onclick=()=>chooseFolder(fbPath);
+$('saveConnection').onclick=()=>{persist();notify('Saved. (Demo — no connection was made.)');};
+$('themeToggle').onclick=()=>{const t=document.documentElement.dataset.theme==='dark'?'light':'dark';applyTheme(t);try{localStorage.setItem('workbench-theme',t);}catch{}};
+$('logButton').onclick=()=>openReader('Full run log',events.length?`${events.length} updates`:'',events.length?events.map(e=>`[${e.time}] ${e.title}\n  ${e.body}${e.artifact>=0?'\n  Saved: '+artifacts[e.artifact].name:''}`).join('\n\n'):'Nothing yet. Start your team and every step will be logged here.');
+$('exportButton').onclick=()=>{
+ const data={prototype:true,preset:currentPreset()?.name||null,goal:$('goal').value,cwd:$('workspacePath').value,sandbox:$('sandbox').value,auto_advance:$('autoAdvance').checked,
+  roles:agents.map(a=>({name:a.name,description:a.description,provider:a.provider,model:a.model||null,artifact_name:a.artifact,prompt:a.prompt,model_reasoning_effort:a.effort.toLowerCase(),
+   // Matches the PyQt app: omitted = anyone (falls back to next in line), a list = only those teammates, [] = nobody.
+   ...(a.route==='choose'?{allowed_handoffs:targetsOf(a).map(t=>t.name)}:a.route==='end'?{allowed_handoffs:[]}:{})}))};
+ const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));
+ const link=document.createElement('a');link.href=url;link.download='workbench-workflow.json';link.click();
+ setTimeout(()=>URL.revokeObjectURL(url),1000);notify('Workflow exported as JSON.');
+};
+
+/* ---------- Init ---------- */
+const hour=new Date().getHours();
+$('greeting').textContent=hour<12?'Good morning':hour<18?'Good afternoon':'Good evening';
+$('chips').insertAdjacentHTML('beforeend',SUGGESTIONS.map(([label],i)=>`<button class="chip" data-suggest="${i}">${esc(label)}</button>`).join(''));
+buildLookPicker();applyTheme(document.documentElement.dataset.theme);updateWorkspace();render();renderHistory();
+</script>
+</body>
+</html>
