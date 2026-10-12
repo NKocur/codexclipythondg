@@ -13,6 +13,7 @@ from urllib.parse import parse_qs, urlsplit
 from powershell_codex_viewer import resolve_codex_command
 from provider_auth import AuthService, PROVIDERS
 from workflow_service import ACTIVE, RunService, validate_request
+from document_preview import render_markdown
 
 ROOT = Path(__file__).resolve().parent
 
@@ -93,10 +94,12 @@ class Handler(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         if path == "/":
             html = (ROOT / "mockup/index-v2.html").read_text(encoding="utf-8")
-            script = '<script src="/live.js"></script>'
+            script = '<script src="/preview.js"></script><script src="/live.js"></script>'
             return self.send(200, html.replace("</body>", script + "</body>").encode(), "text/html; charset=utf-8")
         if path == "/live.js":
             return self.send(200, (ROOT / "web/live.js").read_bytes(), "text/javascript; charset=utf-8")
+        if path == "/preview.js":
+            return self.send(200, (ROOT / "web/preview.js").read_bytes(), "text/javascript; charset=utf-8")
         if path == "/api/bootstrap":
             command = resolve_codex_command()
             return self.send(200, {"token": self.server.token, "cwd": str(ROOT),
@@ -111,16 +114,26 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, {'run': self.server.service.saved_run(run_id)} if run_id else {'runs': self.server.service.list_runs()})
             except (ValueError, OSError) as exc:
                 return self.send(400, {'error': str(exc)})
-        if path == "/api/artifact":
+        if path in {"/api/artifact", "/api/preview"}:
             if not secrets.compare_digest(self.headers.get("X-Workbench-Token", ""), self.server.token):
                 return self.send(403, {"error": "Reload the page to download results."})
             query = parse_qs(urlsplit(self.path).query)
             try:
                 body = self.server.service.download(query.get('run', [''])[0], query.get('name', [''])[0])
+                if path == '/api/preview':
+                    extension = Path(query.get('name', [''])[0]).suffix.lower()
+                    if extension == '.pdf':
+                        return self.send(200, body, 'application/pdf')
+                    text = body.decode('utf-8-sig', errors='replace')
+                    if extension not in {'.md', '.html'}:
+                        raise ValueError('Preview supports Markdown, HTML, and PDF files.')
+                    return self.send(200, {'html': render_markdown(text) if extension == '.md' else text})
                 # Always return bytes for download, never execute generated HTML on the app origin.
                 return self.send(200, body, "application/octet-stream")
             except (ValueError, OSError) as exc:
                 return self.send(400, {"error": str(exc)})
+            except RuntimeError as exc:
+                return self.send(409, {"error": str(exc)})
         if path == "/api/folders":
             if not secrets.compare_digest(self.headers.get("X-Workbench-Token", ""), self.server.token):
                 return self.send(403, {"error": "Reload the page to reconnect to the folder browser."})

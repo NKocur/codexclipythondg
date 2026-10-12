@@ -3,6 +3,13 @@
   'use strict';
   let token = '', latest = null, revision = -1, busy = false, connected = false;
   let savedRuns = [], sourceRunId = '', historyChecked = 0;
+  let viewingSaved = false, liveSnapshot = null, historyRequest = 0;
+  const liveActive = () => ['running','paused','stopping'].includes(liveSnapshot?.run?.status);
+  function previewResult(runId, name) {
+    return window.WorkbenchPreview.open({name, token,
+      url:'/api/preview?run='+encodeURIComponent(runId)+'&name='+encodeURIComponent(name),
+      onDownload:()=>downloadResult(runId,name)});
+  }
   async function downloadResult(runId, name) {
     const response = await fetch('/api/artifact?run='+encodeURIComponent(runId)+'&name='+encodeURIComponent(name), {headers:{'X-Workbench-Token':token}});
     if (!response.ok) throw new Error((await response.json()).error);
@@ -18,12 +25,14 @@
     document.querySelectorAll('#results [data-artifact]').forEach(button => {
       const artifact = artifacts[Number(button.dataset.artifact)];
       if (!artifact?.path) return;
+      const runId = latest.id;
+      button.onclick = e => { e.stopPropagation(); previewResult(runId,artifact.name); };
       const download = document.createElement('button');
       download.className = 'btn'; download.textContent = 'Download';
       download.onclick = async () => {
         download.disabled = true;
         try {
-          await downloadResult(latest.id, artifact.name);
+          await downloadResult(runId, artifact.name);
         } catch (error) { notify(error.message, false); }
         finally { download.disabled = false; }
       };
@@ -67,7 +76,11 @@
   $('kbdHint').hidden = true;
   $('goal').onkeydown = null;
   banner.insertAdjacentHTML('beforeend', '<div class="field" style="margin-top:16px"><label for="sourceRun">Build on a previous run</label><select id="sourceRun"><option value="">Start fresh</option></select><small id="sourceRunHint">Choose earlier work, then pick any team and describe what to do next.</small></div>');
-  $('historyView').insertAdjacentHTML('beforeend', '<section class="card hidden" id="savedRunDetail" style="padding:20px;margin-top:16px"></section>');
+  banner.insertAdjacentHTML('afterbegin', '<div id="savedRunBanner" class="hidden" style="margin-bottom:16px"><strong id="savedRunLabel">Viewing a saved run</strong> <button class="btn" id="returnToLive">Back to latest run</button></div>');
+  $('returnToLive').onclick = () => {
+    ++historyRequest; viewingSaved = false; revision = -1;
+    receive(liveSnapshot || {revision:0,run:null}, true);
+  };
   document.querySelector('#historyView .section-head p').textContent = 'Saved runs, results, and new work built on earlier results.';
   history = [];
   renderHistory = function () {
@@ -83,7 +96,8 @@
     } catch (error) { $('historyList').textContent = error.message; historyChecked = Date.now(); }
   }
   function chooseSource(id) {
-    if (running || busy) return;
+    if (running || busy || liveActive()) return;
+    if (viewingSaved) { viewingSaved = false; revision = liveSnapshot?.revision ?? revision; latest = null; outcome = null; events = []; artifacts = []; agents.forEach(a=>a.status='queued'); }
     sourceRunId = id;
     const source = savedRuns.find(r=>r.id===id);
     if (source) {
@@ -100,16 +114,18 @@
     if (!button || button.disabled) return;
     if (button.dataset.savedContinue) return chooseSource(button.dataset.savedContinue);
     try {
+      const request = ++historyRequest;
       const {run} = await api('/api/history?id='+encodeURIComponent(button.dataset.savedView));
-      $('savedRunDetail').classList.remove('hidden');
-      $('savedRunDetail').innerHTML = `<h2>${esc(run.goal)}</h2><p>${esc(run.status)} · ${esc(run.cwd)}</p>${run.source_run_id?`<p>Continues run ${esc(run.source_run_id)}</p>`:''}${run.error?`<p>${esc(run.error)}</p>`:''}<div style="display:flex;gap:8px;flex-wrap:wrap;margin:16px 0">${(run.artifacts||[]).map(a=>`<button class="btn" data-saved-download="${esc(a.name)}" data-saved-run="${esc(run.id)}">Download ${esc(a.name)}</button>`).join('')}</div><pre style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:400px;overflow:auto">${esc(run.output||'No final response saved.')}</pre>`;
+      if (request !== historyRequest) return;
+      if (['running','paused','stopping'].includes(run.status)) {
+        viewingSaved = false; revision = -1; receive(await api('/api/run'));
+      } else {
+        viewingSaved = true;
+        receive({run}, true);
+      }
+      showView('home');
+      $('homeView').scrollIntoView?.({behavior:'smooth',block:'start'});
     } catch(error) { notify(error.message,false); }
-  });
-  $('savedRunDetail').addEventListener('click', async e => {
-    const button = e.target.closest('[data-saved-download]');
-    if (!button) return;
-    try { await downloadResult(button.dataset.savedRun,button.dataset.savedDownload); }
-    catch(error) { notify(error.message,false); }
   });
   renderHistory();
 
@@ -141,6 +157,15 @@
     $('runBarMain').disabled = $('runButton').disabled;
     $('stopButton').disabled = busy || latest?.status === 'stopping';
     $('runBarStop').disabled = $('stopButton').disabled;
+    $('savedRunBanner').classList.toggle('hidden',!viewingSaved);
+    if (viewingSaved) {
+      $('savedRunLabel').textContent = 'Viewing saved run · '+new Date(latest.started*1000).toLocaleString();
+      $('returnToLive').textContent = liveActive()?'Back to active run':'Back to latest run';
+      $('runButton').innerHTML = $('runBarMain').innerHTML = 'Continue from this run';
+      $('runButton').disabled = $('runBarMain').disabled = busy || !connected || liveActive();
+      $('stopButton').disabled = $('runBarStop').disabled = true;
+      $('goal').disabled = true;
+    } else $('goal').disabled = false;
     if (latest) {
       const next = latest.agents?.[latest.next_index];
       $('runHeadline').textContent = waiting ? `Ready for ${next?.name || 'the next agent'}` : `${latest.agent.name} · ${latest.status}`;
@@ -281,9 +306,13 @@
     notify('Folder selected. Press Save to use it for the next run.');
   };
 
-  function receive(snapshot) {
-    if (snapshot.revision === revision) return;
-    revision = snapshot.revision;
+  function receive(snapshot, historical = false) {
+    if (!historical) {
+      liveSnapshot = snapshot;
+      if (viewingSaved) { render(); return; }
+      if (snapshot.revision === revision) return;
+      revision = snapshot.revision;
+    }
     const newRun = snapshot.run?.id !== latest?.id;
     const changedStatus = snapshot.run?.status !== latest?.status;
     latest = snapshot.run;
@@ -293,7 +322,7 @@
       agents.forEach(a => a.status = 'queued'); events = []; artifacts = [];
       render(); return;
     }
-    if (latest.auth_provider && failedAuthRun !== latest.id) {
+    if (!historical && latest.auth_provider && failedAuthRun !== latest.id) {
       failedAuthRun = latest.id;
       showAuthRequired({provider:latest.auth_provider,state:'sign_in_required',message:'This run was rejected because its credentials were missing or expired. Sign in, then retry the run.',command:latest.auth_provider==='Codex'?'codex.cmd login':'claude.cmd auth login'});
     }
@@ -312,19 +341,24 @@
       if (!waiting || newRun) $('autoAdvance').checked=latest.auto_advance;
       trail = new Set(latest.trail || []);
     }
+    if (historical && !latest.team) {
+      agents = (latest.agents || [latest.agent]).map(a=>({...a}));
+      $('liveMode').value = 'single'; picker.value = latest.agent.id;
+      trail = new Set(latest.trail || []);
+    }
     let index = latest.team ? latest.current : agents.findIndex(a => a.id === latest.agent.id && a.name === latest.agent.name);
     if (index < 0 && running) { agents.push({...latest.agent,status:'queued'}); index = agents.length - 1; }
     current = waiting && latest.next_index != null ? latest.next_index : Math.max(0, index);
     if (!latest.team) agents.forEach((a,i) => a.status = i === index ? (running ? 'running' : latest.status === 'completed' ? 'done' : 'queued') : 'queued');
-    if (running) {
+    if (running || historical) {
       $('goal').value = latest.goal;
-      if (newRun && !$('runSettings').open) {
+      if ((newRun || historical) && !$('runSettings').open) {
         $('workspacePath').value = latest.cwd;
         $('sandbox').value = latest.sandbox;
         updateWorkspace();
       }
     }
-    events = latest.events.map(e => ({time:e.time,title:e.level === 'error' ? 'Error' : e.agent || 'Codex',body:e.text,glyph:e.level === 'error'?'bug':'code',color:null,artifact:-1}));
+    events = (latest.events || []).map(e => ({time:e.time,title:e.level === 'error' ? 'Error' : e.agent || 'Codex',body:e.text,glyph:e.level === 'error'?'bug':'code',color:null,artifact:-1}));
     artifacts = (latest.artifacts || []).map(a=>({...a,color:COLORS[0],body:(a.truncated?'[Preview truncated to 100,000 characters. Full file: '+a.path+']\n\n':'')+a.body}));
     if (!latest.team && latest.output) artifacts.push({name:'Agent response',agent:latest.agent.name,time:'Latest run',version:1,color:COLORS[0],body:latest.output});
     lastSeconds = Math.round(((latest.finished || Date.now()/1000) - latest.started));
@@ -333,6 +367,7 @@
 
   primaryAction = async function () {
     if (busy || !connected) return;
+    if (viewingSaved) return chooseSource(latest.id);
     if (running) {
       if (!latest?.team || latest.status==='stopping' || (latest.pause_requested&&!waiting)) return;
       busy=true;render();
@@ -379,9 +414,11 @@
         token = config.token; connected = true; revision = -1;
         let workspace = null;
         try { workspace = JSON.parse(localStorage.getItem('workbench-live-workspace')); } catch {}
-        $('workspacePath').value = workspace?.cwd || config.cwd;
-        $('sandbox').value = workspace?.sandbox || 'read-only';
-        updateWorkspace();
+        if (!viewingSaved) {
+          $('workspacePath').value = workspace?.cwd || config.cwd;
+          $('sandbox').value = workspace?.sandbox || 'read-only';
+          updateWorkspace();
+        }
         $('liveConnection').textContent = config.codex_available ? 'Codex found · connected to local runner' : 'Codex was not found. Install/sign in to Codex CLI, then restart this server.';
         render();
       }

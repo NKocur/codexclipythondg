@@ -39,7 +39,9 @@ python web_workbench.py
 ```
 
 Open **http://127.0.0.1:8765**. Use `--port 8766` if needed. The web server uses
-only the Python standard library; PyQt and dragongui are not required for it.
+the Python standard library plus `markdown-it-py` for formatted Markdown previews;
+install the web dependency with `python -m pip install -r requirements-web.txt`.
+PyQt and dragongui are not required for it.
 Codex CLI must be installed and signed in on this machine.
 Launch the server from your normal terminal, not a coding tool's restricted
 execution sandbox: child CLI processes inherit that restriction and may fail to
@@ -73,7 +75,11 @@ job instructions. The agent creates the reports alongside the team's Markdown no
 and the workflow stops if a required file is missing, empty, or fails a basic format
 check. PDF generation depends on tools available to the agent; Workbench does not
 bundle a PDF converter or verify full document validity. Results offer downloads
-(up to 50 MB); HTML is downloaded rather than executed within Workbench. Files remain
+(up to 50 MB). **Open** displays formatted Markdown, isolated HTML, or the browser's
+native PDF viewer. The same previews are available from History. HTML previews
+support embedded styling and data images; scripts, remote resources, and embedded
+frames are disabled. PDFs can always be downloaded if the browser cannot display them.
+Files remain
 in the run's artifact directory after a server restart and remain downloadable
 from History while those files are still present.
 
@@ -116,6 +122,9 @@ The original `mockup/index-v2.html` still opens independently as a simulated dem
 ### Build on a previous run
 
 Open **History**, inspect a saved run, and choose **Continue from this run**. Or use
+**View** to reopen its completed Home screen, including the saved goal, team,
+activity feed, and results. **Back to latest run** returns to the live view; status
+polling does not replace the saved run while you inspect it. You can also use
 **Build on a previous run** on Home. Select any team, enter new instructions, and
 run it. The source selection defaults the workspace to the earlier project's folder;
 you can choose a different folder before starting. For example, follow a research
@@ -147,6 +156,7 @@ python -m unittest discover -s tests -p test_workflow_service.py
 python -m unittest discover -s tests -p test_run_history.py
 node tests/test_live_adapter.cjs
 node tests/test_role_deliverables.cjs
+node tests/test_document_preview.cjs
 ```
 
 ## Desktop build

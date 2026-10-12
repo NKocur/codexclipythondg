@@ -93,6 +93,31 @@ class WebTests(unittest.TestCase):
         self.assertEqual(snapshot['run']['source_run_id'],run['id'])
         self.assertIn('source-context.json',self.service.runner.state.prompt)
 
+    def test_formatted_preview_formats_and_auth(self):
+        agent = {**self.data['agent'], 'artifact':'REPORT.md', 'deliverables':['REPORT.html','REPORT.pdf']}
+        run = self.service.start({**self.data, 'sandbox':'workspace-write', 'agents':[agent]})['run']
+        directory = Path(self.temp.name) / run['artifact_dir']
+        (directory/'REPORT.md').write_text('# Findings\n\n**Strong evidence**\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\n<script>alert(1)</script>')
+        (directory/'REPORT.html').write_text('<html><body><h1>Report</h1></body></html>')
+        pdf = b'%PDF-1.4\nfixture\n%%EOF'
+        (directory/'REPORT.pdf').write_bytes(pdf)
+        self.service.runner.on_done(0,'')
+        endpoint = '/api/preview?run='+run['id']+'&name='
+        self.assertEqual(self.request(endpoint+'REPORT.md',token=False)[0],403)
+        code, document = self.request(endpoint+'REPORT.md')
+        self.assertEqual(code,200)
+        self.assertIn('<h1>Findings</h1>',document['html'])
+        self.assertIn('<strong>Strong evidence</strong>',document['html'])
+        self.assertIn('<table>',document['html'])
+        self.assertNotIn('<script>',document['html'])
+        self.assertIn('<h1>Report</h1>',self.request(endpoint+'REPORT.html')[1]['html'])
+        self.assertEqual(self.request(endpoint+'REPORT.pdf'),(200,pdf))
+        req=urllib.request.Request(self.url+endpoint+'REPORT.pdf',headers={'X-Workbench-Token':self.server.token})
+        with urllib.request.urlopen(req) as response:
+            self.assertEqual(response.headers.get_content_type(),'application/pdf')
+        self.assertEqual(self.request(endpoint+'../outside.md')[0],400)
+        self.assertEqual(self.request('/preview.js')[0],200)
+
     def test_page_and_start_snapshot(self):
         code, body = self.request("/")
         self.assertEqual(code, 200)
