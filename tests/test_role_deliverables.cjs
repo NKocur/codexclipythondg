@@ -1,7 +1,8 @@
 const fs = require('node:fs');
 const vm = require('node:vm');
 const assert = require('node:assert/strict');
-const html = fs.readFileSync('mockup/index-v2.html','utf8');
+// Git's Windows checkout may use CRLF; source-fragment markers use LF.
+const html = fs.readFileSync('mockup/index-v2.html','utf8').replace(/\r\n/g, '\n');
 const script = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m=>m[1]).join('\n');
 new vm.Script(script); // Check syntax of the complete standalone UI.
 const fields = new Map();
