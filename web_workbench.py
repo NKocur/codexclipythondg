@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import sys
 import secrets
 import shutil
 import subprocess
@@ -14,6 +16,7 @@ from powershell_codex_viewer import resolve_codex_command
 from provider_auth import AuthService, PROVIDERS
 from workflow_service import ACTIVE, RunService, validate_request
 from document_preview import render_markdown
+from improvement_service import ImprovementService
 
 ROOT = Path(__file__).resolve().parent
 
@@ -62,11 +65,23 @@ def list_folders(path):
 class WorkbenchServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, address, service=None, auth=None):
+    def __init__(self, address, service=None, auth=None, history_dir=None, default_workspace=None):
         super().__init__(address, Handler)
-        self.service = service or RunService(history_dir=ROOT / '.codex-workbench-sessions' / 'web-runs')
+        default_history = (Path(os.environ.get('LOCALAPPDATA', Path.home())) / 'MultiAgentWorkbench' / 'sessions' / 'web-runs'
+                           if getattr(sys, 'frozen', False) else ROOT / '.codex-workbench-sessions' / 'web-runs')
+        self.service = service or RunService(history_dir=history_dir or default_history)
+        self.default_workspace = Path(default_workspace or (Path.home() / 'Documents' if getattr(sys, 'frozen', False) else ROOT))
         self.token = secrets.token_urlsafe(32)
         self.auth = auth or AuthService()
+        improvement_dir = (self.service.history.directory.parent / 'improvements'
+                           if self.service.history else Path(history_dir or default_history).parent / 'improvements')
+        self.improvements = ImprovementService(self.service, improvement_dir, ROOT)
+        self.closing = False
+
+    def server_close(self):
+        if hasattr(self, 'improvements'):
+            self.improvements.close()
+        super().server_close()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -94,18 +109,26 @@ class Handler(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         if path == "/":
             html = (ROOT / "mockup/index-v2.html").read_text(encoding="utf-8")
-            script = '<script src="/preview.js"></script><script src="/live.js"></script>'
+            script = '<script src="/preview.js"></script><script src="/live.js"></script><script src="/improve.js"></script>'
             return self.send(200, html.replace("</body>", script + "</body>").encode(), "text/html; charset=utf-8")
         if path == "/live.js":
             return self.send(200, (ROOT / "web/live.js").read_bytes(), "text/javascript; charset=utf-8")
         if path == "/preview.js":
             return self.send(200, (ROOT / "web/preview.js").read_bytes(), "text/javascript; charset=utf-8")
+        if path == "/improve.js":
+            return self.send(200, (ROOT / "web/improve.js").read_bytes(), "text/javascript; charset=utf-8")
         if path == "/api/bootstrap":
             command = resolve_codex_command()
-            return self.send(200, {"token": self.server.token, "cwd": str(ROOT),
+            return self.send(200, {"token": self.server.token, "cwd": str(self.server.default_workspace), "application": "multi-agent-workbench",
+                                   "plan_workflow": "markdown-plan-v2",
+                                   "improvement_chat": True,
                                    "codex_available": bool(shutil.which(command) or Path(command).is_file())})
         if path == "/api/run":
             return self.send(200, self.server.service.snapshot())
+        if path == '/api/improve':
+            if not secrets.compare_digest(self.headers.get('X-Workbench-Token', ''), self.server.token):
+                return self.send(403, {'error': 'Reload the page to access improvement chat.'})
+            return self.send(200, self.server.improvements.snapshot())
         if path == "/api/history":
             if not secrets.compare_digest(self.headers.get("X-Workbench-Token", ""), self.server.token):
                 return self.send(403, {"error": "Reload the page to access saved runs."})
@@ -167,11 +190,31 @@ class Handler(BaseHTTPRequestHandler):
                 if auth["state"] != "ready":
                     return self.send(401 if auth["state"] == "sign_in_required" else 409,
                                      {"error": auth["message"], "auth": auth})
-                result = self.server.service.start(data)
+                with self.server.service.lock:
+                    if self.server.closing:
+                        raise RuntimeError('Workbench is shutting down.')
+                    result = self.server.service.start(data)
             elif path == "/api/stop":
                 result = self.server.service.stop(data.get("id"))
             elif path == "/api/control":
-                result = self.server.service.control(data.get("id"), data.get("action"), data.get("auto_advance"))
+                result = self.server.service.control(data.get("id"), data.get("action"), data.get("auto_advance"), data.get("additional_turns"), data.get('note'))
+            elif path == '/api/improve':
+                auth = self.server.auth.status('Codex', refresh=True)
+                if auth['state'] != 'ready':
+                    return self.send(401, {'error': auth['message']})
+                if self.server.closing:
+                    raise RuntimeError('Workbench is shutting down.')
+                result = self.server.improvements.start(data)
+            elif path == '/api/improve/stop':
+                result = self.server.improvements.stop()
+            elif path == '/api/improve/apply':
+                if self.server.closing:
+                    raise RuntimeError('Workbench is shutting down.')
+                result = self.server.improvements.apply(data.get('proposal_id'))
+            elif path == '/api/improve/revert':
+                if self.server.closing:
+                    raise RuntimeError('Workbench is shutting down.')
+                result = self.server.improvements.revert(data.get('proposal_id'))
             elif path == "/api/auth/status":
                 result = {"providers": [self.server.auth.status(p, refresh=bool(data.get("refresh"))) for p in PROVIDERS]}
             elif path in {"/api/auth/login", "/api/auth/cancel"}:
@@ -182,6 +225,8 @@ class Handler(BaseHTTPRequestHandler):
                     active = self.server.service.snapshot()["run"]
                     if active and active["status"] in ACTIVE:
                         raise RuntimeError("Stop the active run before changing provider sign-in.")
+                    if self.server.improvements.active():
+                        raise RuntimeError('Finish the improvement request before changing provider sign-in.')
                     result = self.server.auth.login(provider)
                 else:
                     result = self.server.auth.cancel(provider)
@@ -213,6 +258,7 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        server.improvements.close()
         server.auth.close()
         if server.service.runner and server.service.run["status"] in ACTIVE:
             server.service.runner.stop()

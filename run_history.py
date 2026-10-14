@@ -43,6 +43,8 @@ class RunHistory:
         if run['status'] in {'running', 'paused', 'stopping'}:
             run['status'] = 'interrupted'
             run['error'] = 'The server stopped before this run finished. Start a follow-up to continue its work.'
+            if run.get('plan'):
+                run['plan']['outcome'] = 'partial'
         return run
 
     def list(self):
@@ -89,7 +91,7 @@ def prepare_source(source, directory):
         'id': source['id'], 'goal': source['goal'], 'status': source['status'],
         'error': source.get('error', ''), 'source_run_id': source.get('source_run_id'),
         'files': [name for name, _ in files], 'turns': copy.deepcopy(source.get('turns', [])),
-        'final_response': source.get('output', ''),
+        'final_response': source.get('output', ''), 'plan': copy.deepcopy(source.get('plan')),
     }
     (directory / 'source-context.json').write_text(json.dumps(context, ensure_ascii=False, indent=2), encoding='utf-8')
     return [name for name, _ in files]

@@ -504,6 +504,7 @@ body.has-runbar .page{padding-bottom:120px}
   .team-grid{grid-template-columns:1fr}
   .footnote{flex-direction:column;align-items:flex-start}
 }
+@media (max-width:520px){.topbar-inner{height:auto;min-height:66px;flex-wrap:wrap;padding-top:10px;padding-bottom:10px}.nav{order:3;width:100%;justify-content:center;overflow-x:auto}.nav button{flex-shrink:0}}
 @media (max-width:440px){.runbar-label{display:none}#runBarStop{padding:8px 10px}.nav{gap:2px}.nav button{padding:7px 8px;gap:5px}.icon-btn{width:34px}}
 @media (prefers-reduced-motion:reduce){*,*::before{animation:none!important;transition:none!important}}
 </style>
@@ -556,6 +557,7 @@ body.has-runbar .page{padding-bottom:120px}
    <button class="active" data-view="home"><svg aria-hidden="true"><use href="#i-home"/></svg>Home</button>
    <button data-view="team"><svg aria-hidden="true"><use href="#i-users"/></svg>Team</button>
    <button data-view="history"><svg aria-hidden="true"><use href="#i-history"/></svg>History</button>
+   <button data-view="improve"><svg aria-hidden="true"><use href="#i-spark"/></svg>Improve</button>
   </nav>
   <div class="topbar-end">
    <span class="demo-badge" title="Runs and outputs are simulated">Demo</span>
@@ -600,6 +602,7 @@ body.has-runbar .page{padding-bottom:120px}
        <button class="preset-btn" id="presetButton" aria-haspopup="menu" aria-expanded="false" aria-controls="presetMenu"></button>
        <div class="preset-menu hidden" id="presetMenu" role="menu" aria-label="Choose a team"></div>
       </div>
+      <button class="btn" data-blank-team>New blank team</button>
      </div>
      <p>They take turns from left to right, unless you let someone choose who goes next. Click anyone to change what they do.</p></div>
     <label class="switch"><input type="checkbox" role="switch" id="autoAdvance" checked>Keep going automatically</label>
@@ -647,7 +650,7 @@ body.has-runbar .page{padding-bottom:120px}
  <section id="teamView" class="hidden">
   <div class="section-head">
    <div><p class="greeting" style="margin:0">Your team</p><h1 id="teamViewTitle">Plan &amp; build</h1><p id="teamViewBlurb">Each teammate has one job. Give them clear instructions and they'll hand their work to the next.</p></div>
-   <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn ghost" id="restoreTeam">Restore original</button><button class="btn ghost" id="undoTeam">Undo my changes</button><button class="btn" id="saveTeamAs">Save as new team</button><button class="btn primary" data-add><svg aria-hidden="true"><use href="#i-plus"/></svg>Add teammate</button></div>
+   <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-blank-team="team">New blank team</button><button class="btn ghost" id="restoreTeam">Restore original</button><button class="btn ghost" id="undoTeam">Undo my changes</button><button class="btn" id="saveTeamAs">Save as new team</button><button class="btn primary" data-add><svg aria-hidden="true"><use href="#i-plus"/></svg>Add teammate</button></div>
   </div>
   <div class="team-grid" id="teamGrid"></div>
  </section>
@@ -656,6 +659,25 @@ body.has-runbar .page{padding-bottom:120px}
  <section id="historyView" class="hidden">
   <div class="section-head"><div><h1>History</h1><p>Runs you've done in this browser.</p></div></div>
   <div class="card history-list" id="historyList"></div>
+ </section>
+
+ <!-- IMPROVE WORKBENCH -->
+ <section id="improveView" class="hidden">
+  <div class="section-head"><div><h1>Improve Workbench</h1><p>Discuss a run, understand what happened, and prepare improvements.</p></div></div>
+  <div class="card" style="padding:20px">
+   <div class="form-row"><label class="field"><span>Run to review</span><select id="improveRun"><option value="">Choose a run</option></select></label><label class="field"><span>What should the assistant do?</span><select id="improveMode"><option value="review">Review and discuss</option><option value="prepare">Prepare improvements</option></select></label></div>
+   <details style="margin:12px 0"><summary>Workbench source folder</summary><label class="field" style="margin-top:10px"><span>Source code to inspect or improve</span><input id="improveSource" placeholder="Path to your Workbench repository" spellcheck="false"></label><p style="font-size:13px;margin-top:6px">Packaged apps need a source checkout here. Prepared changes are made in an isolated copy.</p></details>
+   <p id="improveStatus" role="status" style="margin:12px 0">Available with the updated local server. Let active runs finish before restarting.</p>
+   <div id="improveMessages" role="log" aria-label="Improvement conversation" style="display:grid;gap:14px;max-height:55vh;overflow:auto;padding:4px 0"><p>Try “Why did this run repeat the same work?” or “Improve how blocked tests are handled.”</p></div>
+   <form id="improveForm" style="margin-top:20px"><label class="field"><span>Your message</span><textarea id="improveMessage" rows="3" maxlength="12000" placeholder="What would you like to understand or improve?" required></textarea></label><div style="display:flex;gap:10px;margin-top:12px"><button class="btn primary" id="improveSend" disabled>Send message</button><button type="button" class="btn hidden" id="improveStop">Stop this request</button></div></form>
+   <details style="margin-top:16px"><summary>Assistant activity</summary><pre id="improveActivity" style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:240px;overflow:auto;font-size:12px"></pre></details>
+  </div>
+  <div class="card hidden" id="improveProposal" style="padding:20px;margin-top:20px">
+   <h2>Prepared improvement</h2><p id="improveSummary" style="margin:10px 0;white-space:pre-wrap"></p><div id="improveTests"></div>
+   <details style="margin:16px 0"><summary>Review the code changes</summary><pre id="improveDiff" style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:450px;overflow:auto;font-size:12px;margin-top:10px"></pre></details>
+   <label style="display:flex;gap:8px;align-items:start"><input type="checkbox" id="improveApprove">I reviewed this diff and want to apply it to Workbench source.</label>
+   <button class="btn primary" id="improveApply" style="margin-top:12px" disabled>Apply reviewed changes</button> <button class="btn hidden" id="improveRevert" style="margin-top:12px">Revert this improvement</button><p id="improveApplyHint" style="font-size:13px;margin-top:8px"></p>
+  </div>
  </section>
 
  <!-- SETTINGS -->
@@ -812,6 +834,32 @@ const SUGGESTIONS=[
 // Mirrors the presets in ../role_presets.json, with friendlier names and descriptions.
 const R=(id,name,description,glyph,provider,artifact,prompt,extra={})=>({id,name,description,glyph,provider,artifact,prompt,effort:'Default',...extra});
 const BUILTIN_PRESETS=[
+ {id:'markdown-plan-v2',name:'Implement a plan · verified batches',blurb:'Track real progress, validate each batch, and surface missing inputs',maxTurns:100,roles:[
+  R('plan-coordinator','Plan Coordinator','Selects useful batches and unblocks progress','map','Codex','PLAN_PROGRESS.md',`Implement the existing Markdown plan identified in the goal. Preserve its contents and unrelated work. Inspect repository instructions. Inventory EVERY required step with stable IDs, short titles and dependencies; refer to original sections rather than copying the plan. Confirm the inventory is exhaustive before the first handoff. On follow-up, reconcile prior evidence with the current workspace; do not import unverified completion claims.
+Use the server's structured plan protocol and accepted state. Select a cohesive, dependency-ready outcome, grouping related steps where they can be reviewed together. Separate independent work from environment-gated work when forming batches. State measurable acceptance criteria covering all selected requirements. Dispatch directly to implementation, review or testing according to missing evidence. Keep PLAN_PROGRESS.md short: current scope, decisions, blockers and next actions. Do not duplicate archived history.
+When work is blocked, state the missing input and exactly how to resume, then continue other independent work. After repeated failures change approach, choose another batch, or ask for user input using wait. Report only when all required work is verified or an honest partial/blocked conclusion is appropriate. Do not modify product code, commit, push or deploy.`,{workflow:'markdown-plan-v2',effort:'High',route:'choose',allowed:['batch-implementer','batch-reviewer','batch-tester','plan-reporter']}),
+  R('batch-implementer','Batch Implementer','Implements the selected outcome and repairs defects','code','Codex','BATCH_IMPLEMENTATION.md',`Read accepted batch state, relevant plan sections and current findings. Implement only the selected batch, preserving unrelated changes and following repository instructions. Address actionable findings, run focused checks and mandatory repository checks, and list every changed file including tests, docs and deletions. Write a concise implementation report with rationale, exact checks/results, unresolved findings and evidence locations. Submit files through the structured protocol; the service assigns the revision and invalidates old approvals. Record missing inputs rather than repeatedly attempting unavailable environments. Do not mark steps verified, commit, push or deploy.`,{effort:'High',route:'choose',allowed:['batch-reviewer','plan-coordinator']}),
+  R('batch-reviewer','Batch Reviewer','Independently reviews actual changes and acceptance evidence','shield','Codex','BATCH_REVIEW.md',`Read the selected batch and relevant source requirements. Inspect the actual diff and changed files independently; ensure the file manifest is complete. Check correctness, edge cases, regressions, maintainability and acceptance coverage. Distinguish pre-existing environment limitations from defects introduced by this revision. Write prioritized findings with stable issue IDs, locations and concrete fixes. Submit a verdict and evidence for every acceptance criterion. Do not change product or test files. Send passing review to testing, actionable defects to implementation, and external blockers to the coordinator. Do not commit, push or deploy.`,{effort:'High',route:'choose',allowed:['batch-implementer','batch-tester','plan-coordinator']}),
+  R('batch-tester','Batch Tester','Checks acceptance and relevant regressions','check','Codex','BATCH_TESTS.md',`Use the selected batch, current implementation revision and independent review. Run meaningful acceptance checks and repository-required regression checks. Record exact commands, exit statuses, observations, failures and skipped checks for each criterion. Missing or unavailable checks never pass. If new tests or code changes are needed, request them from the implementer so the next revision gets independent review; do not edit product or test files yourself. Diagnostic testing of blocked work is allowed, but cannot establish verification without review approval. Write the report and structured verdict, then return to the coordinator or implementer. Do not commit, push or deploy.`,{effort:'High',route:'choose',allowed:['batch-implementer','plan-coordinator']}),
+  R('plan-reporter','Plan Reporter','Reports verified completion or the remaining work','book','Codex','PLAN_OUTCOME.md',`Compare the accepted step inventory against the ENTIRE original source plan. Flag omitted requirements; never equate a run ending with the plan being complete. Read accepted revision-matched review/test receipts. Write a concise COMPLETE, PARTIAL or BLOCKED outcome with verified work, evidence links, outstanding steps, missing inputs and a ready-to-use follow-up goal. Submit the matching structured outcome. Claim complete only when the entire plan is covered and verified. Do not change code, commit, push or deploy.`,{effort:'High',route:'end'})]},
+ {id:'markdown-plan',name:'Implement a Markdown plan',blurb:'Build a long plan in reviewed and tested batches',maxTurns:100,roles:[
+  R('plan-coordinator','Plan Coordinator','Tracks steps and selects the next batch','map','Codex','PLAN_PROGRESS.md',`Implement the existing Markdown plan identified by path in the goal or explicitly supplied in the follow-up source folder. Do not invent a replacement plan. Read repository instructions and inspect the current code and working tree. Preserve unrelated changes. If the plan is missing or ambiguous, record exactly what input is needed and send to Plan Reporter with BLOCKED status rather than guessing.
+
+Own PLAN_PROGRESS.md as the durable ledger. Preserve the source plan unchanged. Record its path and a content hash, stable step IDs (assign IDs if missing), original requirements, dependencies, acceptance checks, and status for EVERY step: pending, in progress, verified, or blocked. Keep an append-only batch history with review/test evidence, changed files, decisions, and remaining work. On a follow-up, recover the prior ledger and reports from source/ and reconcile them against the actual repository and plan before trusting completed statuses. Do not restart already verified work or silently drop steps when the plan changes.
+
+On each visit, first assess the previous batch using BATCH_IMPLEMENTATION.md, BATCH_REVIEW.md and BATCH_TESTS.md for the SAME batch ID and revision. Mark steps verified only when blocking review findings are resolved and required checks have actually passed. Missing, skipped, or unavailable checks are not passes. Select one small dependency-ready batch and write its batch ID, step IDs, scope, affected areas, explicit acceptance checks and remaining overall work in PLAN_PROGRESS.md. Hand off to Batch Implementer with those IDs. Keep selecting batches until every required step is verified; do not stop after the first successful batch.
+
+When all steps are verified, or progress is genuinely blocked by missing input, dependencies, permissions, or repeated failure, send to Plan Reporter. Document blockers and a precise resume instruction; never label blocked work complete. After three failed repair attempts for the same issue, stop the loop and report it. Do not modify product code, commit, push, or deploy.`,{effort:'High',route:'choose',allowed:['batch-implementer','plan-reporter']}),
+  R('batch-implementer','Batch Implementer','Implements one batch or repairs findings','code','Codex','BATCH_IMPLEMENTATION.md',`Read the source Markdown plan, PLAN_PROGRESS.md, and any BATCH_REVIEW.md/BATCH_TESTS.md findings for the current batch. Implement only the selected batch and required repairs, respecting repository instructions and preserving unrelated work. Reuse existing code and patterns. Do not expand scope to later plan steps, rewrite the plan, or mark steps verified yourself.
+
+On repair visits, address every blocking finding before passing the work onward. Run focused checks appropriate to your changes. Write BATCH_IMPLEMENTATION.md with the batch ID and step IDs, an incrementing revision, changed files, rationale, checks actually run and outcomes, unresolved findings, and repair-attempt count. Include enough information to review the current diff independently. Every code change invalidates older review/test approval; pass to Batch Reviewer again. If blocked, record the concrete blocker rather than claiming completion. Do not commit, push, or deploy.`,{effort:'High'}),
+  R('batch-reviewer','Batch Reviewer','Reviews the actual changes against the plan','shield','Codex','BATCH_REVIEW.md',`Read the source plan, PLAN_PROGRESS.md and BATCH_IMPLEMENTATION.md. Inspect the actual changed code and diff against the batch acceptance criteria; do not rely solely on the implementer's summary. Check correctness, edge cases, error handling, regressions, maintainability, reuse and test coverage. Distinguish pre-existing issues from this batch. Do not modify product code.
+
+Write BATCH_REVIEW.md with batch ID and implementation revision, files inspected, prioritized findings with concrete locations and fixes, and an explicit APPROVED, CHANGES REQUIRED or BLOCKED verdict. Send actionable defects back to Batch Implementer. If review passes, send to Batch Tester. If missing input or three failed repairs prevent progress, send to Plan Coordinator with the blocker. Do not approve the whole plan just because this batch passes.`,{effort:'High',route:'choose',allowed:['batch-implementer','batch-tester','plan-coordinator']}),
+  R('batch-tester','Batch Tester','Verifies the batch and checks regressions','check','Codex','BATCH_TESTS.md',`Read the source plan, PLAN_PROGRESS.md, BATCH_IMPLEMENTATION.md and BATCH_REVIEW.md. Verify review approval applies to the current batch and revision. Run meaningful acceptance checks and relevant regression tests using the repository's tooling. Add or improve focused tests where needed, but do not quietly change product code to make tests pass. If you change tests, send them to Batch Reviewer for review before the coordinator accepts the batch.
+
+Write BATCH_TESTS.md with batch ID and implementation revision, exact commands, exit results, coverage of each acceptance criterion, failures, skipped checks and environment limitations. For the final batch include the broader integration/regression checks required by the plan. Never report unavailable or skipped checks as passed. Send reproducible failures to Batch Implementer for repair, or return to Plan Coordinator when verified or genuinely blocked. Always hand off; never end the workflow or mark the entire plan complete yourself.`,{effort:'High',route:'choose',allowed:['batch-implementer','batch-reviewer','plan-coordinator']}),
+  R('plan-reporter','Plan Reporter','Summarizes completion or the exact resume point','book','Codex','PLAN_OUTCOME.md',`Read the source plan and all batch/progress artifacts. Verify that PLAN_PROGRESS.md accounts for every required plan step. Write PLAN_OUTCOME.md with an explicit COMPLETE, PARTIAL or BLOCKED verdict, verified steps and evidence, files changed, tests run, known limitations, unresolved findings, and remaining steps in dependency order. Claim COMPLETE only if every required step is verified with current review and test evidence. Otherwise state precisely what is missing and provide a ready-to-use follow-up goal naming the plan path and next batch. A workflow ending is not proof the plan is finished. Do not modify product code, commit, push, or deploy.`,{effort:'High',route:'end'})]},
  {id:'default',name:'Plan & build',blurb:'Plan it, check it, build it, test it',roles:[
   R('planner','Planner','Maps out the plan','map','Claude','PLAN.md','Look around the project and turn the goal into a concrete plan. Include the steps, any risks, and what each teammate should do.',{effort:'High'}),
   R('reviewer','Reviewer','Pokes holes in the plan','shield','Codex','REVIEW.md','Read PLAN.md. Point out gaps and risks. If the plan needs work, send it back to the Planner; if it is ready, pass it to the Implementer.',{effort:'High',route:'choose',allowed:['planner','implementer']}),
@@ -853,7 +901,7 @@ function normalize(a,i){
  return {id:a.id||'agent-'+i+'-'+Date.now(),name:a.name,prompt:a.prompt,artifact:a.artifact,description:a.description||'',
   provider:PROVIDERS.includes(a.provider)?a.provider:'Codex',model:a.model==='Provider default'?'':(a.model||''),
   effort:a.effort||'Default',route,allowed:Array.isArray(a.allowed)?a.allowed.filter(x=>typeof x==='string'):[],
-  deliverables:Array.isArray(a.deliverables)?a.deliverables.filter(x=>typeof x==='string'):[],
+  deliverables:Array.isArray(a.deliverables)?a.deliverables.filter(x=>typeof x==='string'):[],workflow:a.workflow==='markdown-plan-v2'?a.workflow:undefined,
   glyph:GLYPHS.includes(a.glyph)?a.glyph:'bot',
   color:Number.isInteger(a.color)?Math.abs(a.color)%COLORS.length:i%COLORS.length,status:'queued'};
 }
@@ -863,7 +911,7 @@ function cleanRoutes(){
  for(const a of agents){a.allowed=a.allowed.filter(id=>ids.has(id)&&id!==a.id);if(a.route==='choose'&&!a.allowed.length)a.route='next';}
 }
 const cloneRoles=roles=>roles.map(r=>({...r,allowed:[...r.allowed],deliverables:[...(r.deliverables||[])],status:'queued'}));
-const SNAP_KEYS=['id','name','prompt','artifact','description','provider','model','effort','route','allowed','glyph','color','deliverables'];
+const SNAP_KEYS=['id','name','prompt','artifact','description','provider','model','effort','route','allowed','glyph','color','deliverables','workflow'];
 const snap=roles=>JSON.stringify(roles.map(r=>SNAP_KEYS.map(k=>r[k])));
 const currentPreset=()=>presets.find(p=>p.id===presetId);
 const isEdited=()=>{const p=currentPreset();return !p||snap(agents)!==snap(p.roles);};
@@ -886,13 +934,13 @@ try{
  const s=JSON.parse(localStorage.getItem(KEY));
  if(s){
   if(Array.isArray(s.presets)){
-   const saved=s.presets.filter(p=>p&&typeof p.id==='string'&&typeof p.name==='string'&&Array.isArray(p.roles)&&p.roles.length&&p.roles.every(validRole))
+   const saved=s.presets.filter(p=>p&&typeof p.id==='string'&&typeof p.name==='string'&&Array.isArray(p.roles)&&p.roles.every(validRole))
     .map(p=>({id:p.id,name:p.name,blurb:typeof p.blurb==='string'?p.blurb:'',builtin:!!p.builtin,roles:p.roles.map(normalize)}));
-   if(saved.length)presets=saved;
+   if(saved.length)presets=[...saved,...BUILTIN_PRESETS.filter(p=>!saved.some(x=>x.id===p.id)).map(p=>({...p,roles:cloneRoles(p.roles)}))];
   }
-  presetId=presets.some(p=>p.id===s.presetId)?s.presetId:presets[0].id;
-  agents=cloneRoles(currentPreset().roles);
-  if(Array.isArray(s.agents)&&s.agents.length&&s.agents.every(validRole))agents=s.agents.map(normalize);
+  presetId=s.presetId===null?null:presets.some(p=>p.id===s.presetId)?s.presetId:presets[0].id;
+  agents=cloneRoles(currentPreset()?.roles||[]);
+  if(Array.isArray(s.agents)&&s.agents.every(validRole))agents=s.agents.map(normalize);
   if(typeof s.goal==='string')$('goal').value=s.goal;
   for(const id of FIELDS)if(s[id])$(id).value=s[id];
   $('autoAdvance').checked=s.autoAdvance!==false;
@@ -971,6 +1019,7 @@ function loadPreset(id){
  if(id===presetId&&!isEdited())return;
  if(isEdited()&&currentPreset()&&!confirm(`You have unsaved changes to “${currentPreset().name}”. Switch teams anyway?`))return;
  presetId=id;agents=cloneRoles(p.roles);events=[];artifacts=[];outcome=null;staleRun=false;trail=new Set();
+ const turnLimit=$('turnLimit');if(turnLimit)turnLimit.value=BUILTIN_PRESETS.find(x=>x.id===id)?.maxTurns||20;
  persist();render();notify(`Switched to the ${p.name} team.`);
 }
 function menuAction(action){
@@ -985,6 +1034,14 @@ function menuAction(action){
   const orig=BUILTIN_PRESETS.find(x=>x.id===p.id);
   if(orig&&confirm(`Put “${p.name}” back to how it came?`)){p.roles=cloneRoles(orig.roles);agents=cloneRoles(orig.roles);teamChanged();persist();render();notify(`${p.name} restored.`);}
  }
+}
+function newBlankTeam(view='home'){
+ if(running)return false;
+ if(agents.length&&isEdited()&&!confirm('Start a blank team? Unsaved team edits will be replaced.'))return false;
+ presetId=null;agents=[];events=[];artifacts=[];outcome=null;staleRun=false;current=0;trail=new Set();
+ toggleMenu(false);hideTip();persist();render();showView(view);
+ notify('Blank team ready. Add your first teammate, then use Save as a new team to name it.');
+ return true;
 }
 function showTip(pid){
  const p=presets.find(x=>x.id===pid);
@@ -1124,7 +1181,8 @@ function renderButtons(){
  $('stopButton').classList.toggle('hidden',!running);
  $('kbdHint').classList.toggle('hidden',running);
  $('goal').readOnly=running;
- document.querySelectorAll('[data-suggest],[data-add],#saveTeamAs').forEach(x=>x.disabled=running);
+ document.querySelectorAll('[data-suggest],[data-add],[data-blank-team],#saveTeamAs').forEach(x=>x.disabled=running);
+ b.disabled=!running&&!agents.length;
  const p=currentPreset(),orig=p?.builtin&&BUILTIN_PRESETS.find(x=>x.id===p.id);
  $('undoTeam').disabled=running||!p||!isEdited();
  $('restoreTeam').classList.toggle('hidden',!(orig&&snap(p.roles)!==snap(orig.roles)));$('restoreTeam').disabled=running;
@@ -1169,6 +1227,7 @@ function render(){renderTeam();renderStatus();renderButtons();renderResults();re
 
 /* ---------- Run simulation ---------- */
 function startRun(){
+ if(!agents.length){notify('Add at least one teammate before running.',false);return;}
  if(!$('goal').value.trim()){notify('Tell your team what to work on first.',false);$('goal').focus();return;}
  persist();
  running=true;paused=false;waiting=false;outcome=null;current=0;runStarted=Date.now();events=[];artifacts=[];staleRun=false;sentBack=new Set();trail=new Set(['-1>0']);
@@ -1268,7 +1327,7 @@ function openEditor(index=-1){
  $('targetList').innerHTML=agents.map((t,j)=>j===index?'':`<label class="target"><input type="checkbox" value="${esc(t.id)}" ${a?.allowed.includes(t.id)?'checked':''}>${avatar({...t,status:''})}${esc(t.name)}<small>${j<pos?'sends back':'later'}</small>${icon('check','tick')}</label>`).join('');
  updateRoutePicker();
  $('advancedAgent').open=false;
- $('removeAgent').classList.toggle('hidden',!a||agents.length===1);
+ $('removeAgent').classList.toggle('hidden',!a);
  updateEditorAvatar();$('editor').showModal();
 }
 function updateRoutePicker(){
@@ -1289,7 +1348,7 @@ function openReader(title,sub,body){$('readerTitle').textContent=title;$('reader
 
 /* ---------- Views ---------- */
 function showView(view){
- for(const v of ['home','team','history','settings'])$(v+'View').classList.toggle('hidden',v!==view);
+ for(const v of ['home','team','history','improve','settings'])$(v+'View').classList.toggle('hidden',v!==view);
  document.querySelectorAll('.nav [data-view]').forEach(b=>{const on=b.dataset.view===view;b.classList.toggle('active',on);on?b.setAttribute('aria-current','page'):b.removeAttribute('aria-current');});
  window.scrollTo({top:0});renderRunBar();
 }
@@ -1366,6 +1425,7 @@ document.addEventListener('click',e=>{
  if(b.dataset.agent!==undefined){const i=Number(b.dataset.agent);running?openDetail(i):openEditor(i);}
  if(b.dataset.edit!==undefined)openEditor(Number(b.dataset.edit));
  if(b.hasAttribute('data-add'))openEditor();
+ if(b.hasAttribute('data-blank-team'))newBlankTeam(b.dataset.blankTeam||'home');
  if(b.dataset.artifact!==undefined){const r=artifacts[Number(b.dataset.artifact)];if(r)openReader(r.name,'Made by '+r.agent+' · '+r.time,r.body);}
  if(b.dataset.preset)loadPreset(b.dataset.preset);
  if(b.dataset.menu)menuAction(b.dataset.menu);
@@ -1418,7 +1478,7 @@ $('agentForm').onsubmit=e=>{
  notify(editing<0?`${name} joined the team.`:`${name} updated.`);
 };
 $('removeAgent').onclick=()=>{
- if(editing<0||agents.length<2)return;
+ if(editing<0||running)return;
  const [gone]=agents.splice(editing,1);teamChanged();cleanRoutes();persist();render();$('editor').close();notify(`${gone.name} left the team.`);
 };
 $('undoTeam').onclick=()=>menuAction('undo');

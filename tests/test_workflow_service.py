@@ -149,11 +149,35 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(self.service.run['status'],'running')
         self.assertEqual(len(self.service.run['turns']),1)
 
-    def test_limit_stops_sendback_loop(self):
+    def test_limit_waits_for_explicit_extension_and_can_stop(self):
         self.start(max_turns=2);self.complete();result=self.complete(handoff('Planner'))
-        self.assertEqual(result['status'],'failed')
-        self.assertIn('limit of 2',result['error'])
+        self.assertEqual(result['status'],'paused')
+        self.assertEqual(result['pause_reason'],'turn_limit')
+        self.assertEqual(result['next_index'],0)
+        self.assertIsNone(result['finished'])
         self.assertEqual(len(result['turns']),2)
+        count=len(Runner.instances)
+        for action, extra in [('continue',None),('extend',None),('extend',0),('extend',True),('extend',101)]:
+            with self.assertRaises(ValueError): self.service.control(result['id'],action,additional_turns=extra)
+        self.assertEqual(len(Runner.instances),count)
+        self.service.control(result['id'],'extend',additional_turns=2)
+        self.assertEqual(self.service.run['max_turns'],4)
+        self.assertEqual(self.service.run['agent']['name'],'Planner')
+        self.assertIsNone(self.service.run['pause_reason'])
+        self.complete();result=self.complete(handoff('Planner'))
+        self.assertEqual(result['status'],'paused')
+        count=len(Runner.instances)
+        self.service.stop(result['id'])
+        self.assertEqual(self.service.run['status'],'stopped')
+        self.assertEqual(len(Runner.instances),count)
+
+    def test_manual_limit_pause_and_completion_at_limit(self):
+        run=self.start(max_turns=1,auto_advance=False)
+        self.complete()
+        self.assertEqual(self.service.run['pause_reason'],'turn_limit')
+        self.service.stop(run['id'])
+        self.start(max_turns=1,agents=[role('Finisher','end')])
+        self.assertEqual(self.complete()['status'],'completed')
 
     def test_invalid_handoffs_do_not_advance(self):
         for text in (handoff('Tester'), handoff('Unknown'), 'Missing marker',

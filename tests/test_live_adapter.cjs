@@ -42,6 +42,7 @@ const context = vm.createContext({
       const data=JSON.parse(options.body);
       if(data.action==='pause') serverRun.pause_requested=true;
       else {serverRun.pause_requested=false;serverRun.status='running';serverRun.current=serverRun.next_index;serverRun.agent=serverRun.agents[serverRun.current];serverRun.auto_advance=data.auto_advance;}
+      if(data.action==='extend'){serverRun.max_turns+=data.additional_turns;serverRun.pause_reason=null;}
       rev++;
     }
     if (path === '/api/stop') {serverRun.status='stopped';rev++;}
@@ -60,6 +61,7 @@ function stateOf(a){return ['',a.status];} function teamChanged(){}
 function notify(message){globalThis.lastNotice=message;}
 function updateWorkspace(){} function renderRecent(){} function primaryAction(){}
 function showView(view){globalThis.currentView=view;}
+function newBlankTeam(){agents=[];events=[];artifacts=[];outcome=null;return true;}
 $('saveSettings').onclick=()=>{};
 `, context);
 vm.runInContext(fs.readFileSync('web/live.js','utf8'), context);
@@ -131,6 +133,10 @@ const settle=()=>new Promise(resolve=>setImmediate(resolve));
   await timers.shift()();
   assert.equal(run('waiting'),true);assert.equal(el('runButton').innerHTML,'Continue');assert.equal(el('runButton').disabled,false);
   assert.equal(run('artifacts[0].body'),'Actual plan file');
+  serverRun.pause_reason='turn_limit';serverRun.turn_budget=20;rev++;
+  await timers.shift()();
+  assert.equal(el('runButton').innerHTML,'Allow 20 more turns');
+  assert(el('runHelp').textContent.includes('No agent is running'));
   serverRun.artifacts[0].path='artifacts/PLAN.md';rev++;
   const openButton=el('openResult');openButton.dataset={artifact:'0'};resultButtons=[openButton];
   await timers.shift()();
@@ -140,6 +146,9 @@ const settle=()=>new Promise(resolve=>setImmediate(resolve));
   assert(previews.at(-1).url.includes('/api/preview?run='));
   resultButtons=[];
   el('autoAdvance').checked=false;await run('primaryAction()');
+  const extension=JSON.parse(requests.filter(r=>r.path==='/api/control').at(-1).options.body);
+  assert.equal(extension.action,'extend');assert.equal(extension.additional_turns,20);
+  assert.equal(serverRun.max_turns,40);
   assert.equal(serverRun.agent.name,'Tester');assert.equal(serverRun.auto_advance,false);
   await el('stopButton').onclick();assert.equal(run('running'),false);
   assert(el('historyList').innerHTML.includes('Prior literature review'));
@@ -189,5 +198,41 @@ const settle=()=>new Promise(resolve=>setImmediate(resolve));
   assert.equal(el('goal').disabled,false);
   await timers.shift()();
   assert.equal(el('goal').value,'');
+  run('newBlankTeam()');
+  assert.equal(run('agents.length'),0);
+  assert.equal(el('liveMode').value,'team');
+  assert.equal(el('runButton').disabled,true);
+  const blankPosts=requests.filter(r=>r.options?.method==='POST').length;
+  await run('primaryAction()');
+  assert.equal(requests.filter(r=>r.options?.method==='POST').length,blankPosts);
+  assert.equal(run('lastNotice'),'Add at least one teammate before running.');
+  rev++;await timers.shift()();
+  assert.equal(run('agents.length'),0);
+  // A refreshed page must not launch the new protocol against the old live server.
+  run("agents=[{id:'plan-coordinator',name:'Coordinator',provider:'Codex',workflow:'markdown-plan-v2'}];render()");
+  assert.equal(el('runButton').disabled,true);
+  const beforePlan=requests.filter(r=>r.options?.method==='POST').length;
+  await run('primaryAction()');
+  assert.equal(requests.filter(r=>r.options?.method==='POST').length,beforePlan);
+  assert.match(run('lastNotice'),/restart Workbench/);
+  run("delete agents[0].workflow");
+  el('goal').value='Implement the plan';await run('primaryAction()');
+  serverRun.plan={outcome:'in_progress',current:'B1',steps:[{id:'S1',title:'Feature',status:'awaiting_tests'},{id:'S2',title:'Native check',status:'blocked'}],
+    batches:[{id:'B1',title:'Feature batch',revision:2,status:'awaiting_tests',blockers:[{id:'vm',need:'Provide native image',resume:'Supply the image path'}]}],needs_input:[]};
+  rev++;await timers.shift()();
+  assert.match(el('planProgressBody').innerHTML,/0 of 2 steps verified/);
+  assert.match(el('planProgressBody').innerHTML,/1 awaiting validation/);
+  assert.match(el('planProgressBody').innerHTML,/Provide native image/);
+  serverRun.status='paused';serverRun.pause_reason='needs_input';serverRun.next_index=0;
+  serverRun.plan.notice='Waiting for the image';rev++;await timers.shift()();
+  assert.equal(el('runHeadline').textContent,'Your input is needed');
+  el('planResumeNote').value='Image is ready at images/native.img';
+  await run('primaryAction()');
+  const resume=JSON.parse(requests.filter(r=>r.path==='/api/control').at(-1).options.body);
+  assert.equal(resume.note,'Image is ready at images/native.img');
+  assert.equal(el('planResumeNote').value,'');
+  serverRun.status='completed';serverRun.plan.outcome='blocked';rev++;await timers.shift()();
+  assert.match(el('runHeadline').textContent,/Run finished · Plan blocked/);
+  assert.doesNotMatch(el('runHeadline').textContent,/Plan complete/);
   console.log('Live adapter: execution, reports, folders, auth, saved history and follow-up selection passed.');
 })().catch(error=>{console.error(error);process.exitCode=1;});

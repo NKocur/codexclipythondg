@@ -163,6 +163,7 @@ class CodexExecRunner:
                 errors="replace",
                 bufsize=1,
                 start_new_session=sys.platform != "win32",
+                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0,
             )
             with self._process_lock:
                 self.process = process

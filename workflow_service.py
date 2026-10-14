@@ -16,6 +16,7 @@ from handoff_protocol import (
 from powershell_codex_viewer import CodexExecRunner, CodexRunState
 from provider_auth import failure_kind
 from run_history import RunHistory, artifact_path, prepare_source
+import plan_workflow
 
 ACTIVE = {"running", "stopping", "paused"}
 
@@ -71,11 +72,22 @@ def validate_request(data):
             if artifact.casefold() in files:
                 raise ValueError("Each agent must have its own output filename.")
             files.add(artifact.casefold())
+    if any(r.get('workflow') for r in roles):
+        if (not team or roles[0].get('workflow') != plan_workflow.VERSION or
+                tuple(r['id'] for r in roles) != plan_workflow.ROLES):
+            raise ValueError('Structured plan teams require the five original role IDs in order.')
     for role in roles:
         allowed = role.get("allowed", [])
         if role["route"] == "choose" and (not isinstance(allowed, list) or not allowed or
                 any(not isinstance(x, str) or x not in ids or x == role["id"] for x in allowed)):
             raise ValueError(f"Choose valid handoff recipients for {role['name']}.")
+    if roles[0].get('workflow') == plan_workflow.VERSION:
+        required = [set(plan_workflow.ROLES[1:]), {'batch-reviewer', 'plan-coordinator'},
+                    {'batch-implementer', 'batch-tester', 'plan-coordinator'},
+                    {'batch-implementer', 'plan-coordinator'}]
+        if (roles[-1]['route'] != 'end' or any(r['route'] != 'choose' or not targets <= set(r['allowed'])
+                                              for r, targets in zip(roles, required))):
+            raise ValueError('Structured plan teams need the preset handoff routes to enforce review, testing and blocker recovery.')
     goal, cwd = data.get("goal"), data.get("cwd")
     if not isinstance(goal, str) or not goal.strip():
         raise ValueError("A goal is required.")
@@ -136,7 +148,8 @@ class RunService:
             if self.run:
                 runs = [r for r in runs if r['id'] != self.run['id']] + [copy.deepcopy(self.run)]
             return [{key: r.get(key) for key in ('id', 'goal', 'status', 'started', 'finished', 'cwd', 'source_run_id')}
-                    | {'count': len(r.get('artifacts', [])), 'team': [a['name'] for a in r.get('agents', [])]}
+                    | {'count': len(r.get('artifacts', [])), 'team': [a['name'] for a in r.get('agents', [])],
+                       'plan_outcome': r.get('plan', {}).get('outcome')}
                     for r in sorted(runs, key=lambda r: r.get('started', 0), reverse=True)]
 
     def snapshot(self):
@@ -168,10 +181,14 @@ class RunService:
                 "started": time.time(), "finished": None, "error": "", "next_index": None,
                 "auto_advance": data.get("auto_advance", True), "pause_requested": False,
                 "max_turns": limit, "artifact_dir": f"artifacts/workbench/{run_id}" if writes_files else None,
+                "turn_budget": limit, "pause_reason": None,
                 "trail": ["-1>0"],
                 "source_run_id": source['id'] if source else None,
                 "source_goal": source['goal'] if source else None, "source_files": source_files,
             }
+            if roles[0].get('workflow') == plan_workflow.VERSION:
+                self.run['plan'] = plan_workflow.initial_state()
+                self._save_plan_state()
             self.revision += 1
             self._launch(0, "")
             return self.snapshot()
@@ -221,7 +238,64 @@ class RunService:
             instructions += "This role always passes to the next agent in sequence.\n"
         else:
             instructions += f"This role ends the workflow. Finish with {APPROVED} {HANDOFF_DONE}.\n"
-        return prompt + instructions + (f"\nDirect message from previous agent:\n{relay}\n" if relay else "")
+        structured = plan_workflow.prompt(run['plan'], role['id'], self.turn, run['artifact_dir']) if 'plan' in run else ''
+        return prompt + instructions + structured + (f"\nDirect message from previous agent:\n{relay}\n" if relay else "")
+
+    def _save_plan_state(self):
+        path = (self.artifact_directory / 'PLAN_STATE.json').resolve()
+        if not path.is_relative_to(self.artifact_directory):
+            raise ValueError('Plan state must remain inside this run.')
+        path.write_text(json.dumps(self.run['plan'], ensure_ascii=False, indent=2), encoding='utf-8')
+
+    def _plan_handoff(self, target, body):
+        """Accept this role's update and enforce semantic gates before routing."""
+        run, directory = self.run, self.artifact_directory
+        path = (directory / 'PLAN_UPDATE.json').resolve(strict=True)
+        if not path.is_relative_to(directory) or path.stat().st_size > 256_000:
+            raise ValueError('PLAN_UPDATE.json must be inside this run and under 256 KB.')
+        update = json.loads(path.read_text(encoding='utf-8-sig'))
+        plan_workflow.refresh(run['plan'], Path(run['cwd']))
+        archive = directory / 'evidence' / f'turn-{self.turn:04d}'
+        if not archive.resolve().is_relative_to(directory):
+            raise ValueError('Evidence directory must stay inside this run.')
+        report = str((archive / run['agent']['artifact']).relative_to(Path(run['cwd'])))
+        state, override = plan_workflow.apply_update(run['plan'], update, run['agent']['id'],
+                                                   self.turn, Path(run['cwd']), report)
+        if target is None and state['outcome'] == 'in_progress':
+            raise ValueError('Only the Plan Reporter may finish a structured plan workflow.')
+        if run['agent']['id'] == 'plan-coordinator' and override is None:
+            chosen = run['agents'][target]['id'] if target is not None else None
+            if chosen not in ('batch-implementer', 'batch-reviewer', 'batch-tester'):
+                raise ValueError('Select must dispatch implementation, review or testing.')
+        archive.mkdir(parents=True, exist_ok=True)
+        # Store exact accepted reports rather than relying on mutable shared filenames.
+        for filename in (run['agent']['artifact'], 'PLAN_UPDATE.json'):
+            source = (directory / filename).resolve(strict=True)
+            destination = (archive / filename).resolve()
+            if not source.is_relative_to(directory) or not destination.is_relative_to(directory):
+                raise ValueError('Evidence paths must stay inside the run.')
+            destination.write_bytes(source.read_bytes())
+        run['plan'] = state
+        self._save_plan_state()
+        if override == 'wait':
+            self._plan_pause('needs_input', 'The plan needs input before more work can proceed.')
+            return None
+        if override:
+            target = next(i for i, a in enumerate(run['agents']) if a['id'] == override)
+            body = f"Structured batch status routes to {run['agents'][target]['name']}. Read PLAN_STATE.json and current evidence.\n{body}"
+        return target, body
+
+    def _plan_pause(self, reason, message):
+        run = self.run
+        run.update(status='paused', pause_reason=reason, next_index=0, pause_requested=False,
+                   relay=message)
+        run['plan']['notice'] = message
+        try:
+            self._save_plan_state()
+        except (OSError, ValueError) as exc:
+            run['plan']['notice'] += f' Could not save plan snapshot: {exc}'
+        self.log(run['id'], message)
+        self._save_history()
 
     def _targets(self, index):
         roles, role = self.run["agents"], self.run["agents"][index]
@@ -234,12 +308,14 @@ class RunService:
     def _launch(self, index, relay):
         run = self.run
         if len(run["turns"]) >= run["max_turns"]:
-            self._finish("failed", f"Stopped at the limit of {run['max_turns']} agent turns. Review the handoff loop before starting again.")
+            run.update(status='paused', pause_reason='turn_limit', next_index=index, relay=relay, pause_requested=False)
+            self.log(run['id'], f"Reached the limit of {run['max_turns']} agent turns. Waiting for your decision to allow more turns or stop.")
+            self._save_history()
             return
         self.turn += 1
         turn = self.turn
         role = run["agents"][index]
-        run.update(status="running", current=index, agent=role, next_index=None)
+        run.update(status="running", current=index, agent=role, next_index=None, pause_reason=None)
         role["status"] = "running"
         self.turn_output = self.turn_error = ""
         self.final_message = ""
@@ -382,6 +458,15 @@ class RunService:
                 target, body = self._route()
             except (OSError, ValueError) as exc:
                 self._finish("failed", f"{role['name']}: {exc}"); return
+            if 'plan' in run:
+                try:
+                    result = self._plan_handoff(target, body)
+                    if result is None:
+                        return
+                    target, body = result
+                except (OSError, ValueError, TypeError, KeyError) as exc:
+                    self._plan_pause('plan_validation', f'Batch validation needs attention: {exc}')
+                    return
             if target is None:
                 run["trail"].append(f"{run['current']}>{len(run['agents'])}")
                 self._finish("completed"); return
@@ -393,6 +478,9 @@ class RunService:
                 for item in run["agents"][previous + 1:target]: item["status"] = "skipped"
             run["next_index"], run["relay"] = target, body
             self.log(run_id, f"{role['name']} → {run['agents'][target]['name']}: {body}")
+            if len(run['turns']) >= run['max_turns']:
+                self._launch(target, body)
+                return
             if run["pause_requested"] or not run["auto_advance"]:
                 run["status"] = "paused"
                 self.log(run_id, f"Waiting before {run['agents'][target]['name']}. Continue when ready.")
@@ -402,6 +490,8 @@ class RunService:
 
     def _finish(self, status, error=""):
         self.run.update(status=status, error=error, finished=time.time(), pause_requested=False)
+        if 'plan' in self.run and status != 'completed':
+            self.run['plan']['outcome'] = 'partial'
         if status != "completed": self.run["agent"]["status"] = "failed" if status == "failed" else "stopped"
         if status == "completed":
             for role in self.run["agents"]:
@@ -409,7 +499,7 @@ class RunService:
         self.log(self.run["id"], error or f"Run {status}.", "error" if error else "info")
         self._save_history()
 
-    def control(self, run_id, action, auto_advance=None):
+    def control(self, run_id, action, auto_advance=None, additional_turns=None, note=None):
         with self.lock:
             if not self.run or self.run["id"] != run_id or self.run["status"] not in ACTIVE:
                 raise ValueError("That workflow is no longer active.")
@@ -417,11 +507,28 @@ class RunService:
                 if self.run["status"] != "running": raise ValueError("The workflow is not running.")
                 self.run["pause_requested"] = True
                 self.log(run_id, "Will pause after the current agent finishes.")
-            elif action == "continue":
+            elif action in {"continue", "extend"}:
                 if self.run["status"] != "paused": raise ValueError("The workflow is not waiting.")
+                if note is not None:
+                    note = plan_workflow.text(note, 'Resume instructions', 6000)
+                at_limit = self.run.get('pause_reason') == 'turn_limit'
+                if at_limit and action != 'extend':
+                    raise ValueError('The turn limit was reached. Explicitly allow additional turns or stop the run.')
+                if action == 'extend':
+                    if not at_limit:
+                        raise ValueError('This run is not waiting at its turn limit.')
+                    if isinstance(additional_turns, bool) or not isinstance(additional_turns, int) or not 1 <= additional_turns <= 100:
+                        raise ValueError('Allow between 1 and 100 additional turns.')
                 if auto_advance is not None:
                     if not isinstance(auto_advance, bool): raise ValueError("Auto-continue must be true or false.")
                     self.run["auto_advance"] = auto_advance
+                if action == 'extend':
+                    self.run['max_turns'] += additional_turns
+                    self.log(run_id, f'You allowed {additional_turns} more turns. New limit: {self.run["max_turns"]}.')
+                if note is not None:
+                    self.run['relay'] += '\nUser resume instructions:\n' + note
+                if 'plan' in self.run:
+                    self.run['plan'].pop('notice', None)
                 self.run["pause_requested"] = False
                 self._launch(self.run["next_index"], self.run["relay"])
             else:

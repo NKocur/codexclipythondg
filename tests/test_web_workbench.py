@@ -32,10 +32,36 @@ class FakeAuth:
 
 
 class WebTests(unittest.TestCase):
+    def test_advertises_structured_plan_capability(self):
+        code, config = self.request('/api/bootstrap')
+        self.assertEqual(code, 200)
+        self.assertEqual(config['plan_workflow'], 'markdown-plan-v2')
+        self.assertTrue(config['improvement_chat'])
+
+    def test_improvement_chat_auth_and_independent_execution(self):
+        self.assertEqual(self.request('/api/improve', token=False)[0], 403)
+        self.assertEqual(self.request('/api/improve', {}, token=False)[0], 403)
+        self.assertEqual(self.request('/api/improve/apply', {}, token=False)[0], 403)
+        run = self.service.start(self.data)['run']
+        main_runner = self.service.runner
+        self.server.improvements.runner_factory = FakeRunner
+        code, result = self.request('/api/improve', dict(run_id=run['id'], mode='review', message='Review this run'))
+        self.assertEqual(code, 200)
+        self.assertEqual(result['chat']['status'], 'running')
+        self.assertIs(self.service.runner, main_runner)
+        self.assertEqual(self.service.run['status'], 'running')
+        runner = self.server.improvements.runner
+        runner.on_event({'type':'item.completed','item':{'type':'agent_message','text':'Reviewed the run.'}})
+        runner.on_done(0, '')
+        code, result = self.request('/api/improve')
+        self.assertEqual(result['chat']['messages'][-1]['text'], 'Reviewed the run.')
+        self.assertEqual(self.request('/improve.js')[0], 200)
+        self.assertIn(b'id="improveView"', self.request('/')[1])
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.service = RunService(FakeRunner)
-        self.server = WorkbenchServer(("127.0.0.1", 0), self.service, FakeAuth())
+        self.server = WorkbenchServer(("127.0.0.1", 0), self.service, FakeAuth(), history_dir=Path(self.temp.name)/'history')
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.url = f"http://127.0.0.1:{self.server.server_port}"

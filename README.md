@@ -32,6 +32,70 @@ The app delegates Codex CLI execution to `powershell_codex_viewer.py`, which lau
 
 ## Local web interface
 
+### Windows tray application
+
+Launch `dist\WorkbenchTray\WorkbenchTray.exe`. Keep the entire `WorkbenchTray`
+folder together, including `_internal`; Python is bundled. Left-click the tray
+icon to open the web interface, or right-click for status, **Open Workbench**,
+**Start with Windows**, and **Quit**. Startup is optional and applies at your
+Windows sign-in, without opening a browser or terminal. Enable it only after
+placing the application in its permanent location; toggle it off before moving
+or removing that folder, then back on from the new location if needed.
+
+The icon changes color while running, waiting, or failed. Windows notifications
+announce waiting states, completion, and failures (subject to Windows notification
+settings). Quitting an owned server asks before stopping an active workflow.
+If the normal web server is already running, the tray attaches to it and its Quit
+item closes only the tray; it never takes over or stops that existing server.
+If an attached server is later stopped, relaunch the tray to start its own server.
+
+Packaged history and logs live under `%LOCALAPPDATA%\MultiAgentWorkbench`;
+result files stay in the selected project workspace. Launching this build from
+the checkout's `dist` folder imports existing checkout run records when it starts
+its own server, without changing their original files. Codex/Claude/Ollama still
+require their own installations and provider sign-in. This is a portable Windows
+build, not an installer; startup is not enabled by building or testing it.
+
+To rebuild in an isolated Python environment:
+
+```powershell
+.\scripts\build_tray.ps1 -InstallDeps
+```
+
+The build uses `.venv-tray` and leaves the regular server process alone. The
+packaged `--self-test-output <path>` mode checks bundled assets and Markdown on a
+temporary port without creating a tray icon or changing startup registration.
+
+### GitHub release downloads
+
+The **Windows tray release** Actions workflow builds on Windows, runs the web/tray
+tests, checks the compiled executable on a temporary port, and packages the whole
+app folder with a version manifest and SHA-256 checksum. It never starts an agent
+or enables Windows startup. `dist/` stays ignored by Git.
+
+Commit and push the tray source, requirements, build/package scripts, tests, and
+`.github` workflow files before creating a release tag. To prepare a version:
+
+```powershell
+git tag -a tray-v0.1.0 -m "Workbench Tray 0.1.0"
+git push origin tray-v0.1.0
+```
+
+The tag push creates a **draft** release with the Windows x64 ZIP and checksum.
+Review the draft under the repository's Releases page, edit its notes if needed,
+then publish it. Existing releases are never overwritten by a rerun; recovery
+builds remain downloadable from the Actions run. No personal access token is needed;
+the workflow uses GitHub's built-in token with release permissions.
+
+For a build without a release, choose **Actions → Windows tray release → Run
+workflow**. Manual runs upload an Actions artifact only. You can also package an
+existing local build with `./scripts/package_tray.ps1 -Version preview`; the ZIP
+and checksum appear in `dist/releases/`. The script smoke-tests the executable
+before packaging and includes only the application bundle, not project files,
+credentials, run history, or the build environment.
+
+### Run from Python
+
 From the repository root, run:
 
 ```powershell
@@ -85,6 +149,10 @@ from History while those files are still present.
 
 For a team run:
 
+To build from scratch, click **New blank team** beside the team picker. Add teammates
+one at a time, then use the picker’s **Save as a new team** action to name and keep
+the lineup. Empty drafts survive refreshes; add at least one teammate before running.
+
 1. Pick or edit a team. If it contains other providers, click **Use Codex for this
    team**. This explicitly changes all roles to Codex and clears incompatible model
    names on converted roles. Claude/Ollama task execution is not connected yet.
@@ -100,8 +168,12 @@ For a team run:
 **Next in line** advances in order. **Let them choose** requires a valid handoff to
 one of the selected teammates and supports send-backs. A final reviewer with only
 earlier recipients can explicitly approve completion. **End the run** finishes early.
-Invalid/missing choice markers, missing artifacts, CLI errors, or the turn limit stop
+Invalid/missing choice markers, missing artifacts, or CLI errors stop
 the workflow and preserve completed outputs for inspection.
+At the turn limit, the workflow pauses before the next agent and asks whether to
+continue. **Allow N more turns** adds another block equal to the initial limit;
+**Stop** ends the run. No agent runs while that decision is pending. Each extension
+requires another explicit choice, and the pending handoff is preserved.
 
 **Pause after this agent** lets the current process finish and waits before launching
 the next role. **Continue** resumes that handoff. Turning off **Keep going automatically**
@@ -118,6 +190,80 @@ relaunched. Claude/Ollama execution and provider session memory are not connecte
 Single-agent Results show the agent response; team Results
 show the actual output files captured at each completed turn.
 The original `mockup/index-v2.html` still opens independently as a simulated demo.
+
+### Implement a long Markdown plan
+
+For new runs, choose **Implement a plan · verified batches**. This upgraded preset
+adds structured progress and revision-matched validation. It appears separately
+so saved teams, customized prompts, and active runs keep their existing behavior.
+After updating the app, let any active run finish before restarting the server.
+The new preset is disabled when connected to an older server.
+
+The coordinator can dispatch directly to implementation, review, or testing.
+It inventories every source-plan step once, groups related steps into useful
+batches, and selects work whose dependencies are verified. It can split independent
+steps out of a blocked batch without carrying over approvals. Each role writes a
+small `PLAN_UPDATE.json`; the server validates it and owns `PLAN_STATE.json`.
+The source plan and registered step inventory cannot silently change mid-run.
+
+The server fingerprints each batch's submitted changed-file manifest, assigns
+implementation revisions, and accepts review/test receipts only for that revision.
+Every acceptance criterion needs evidence and a passing result from both roles;
+skipped checks cannot verify a batch. Changed files invalidate earlier receipts,
+including affected previously verified batches and their dependent work. The
+coordinator must arrange fresh validation. Reviewers also check that the file
+manifest covers the actual changes. These gates validate reported evidence and
+file identity; agents still judge plan coverage, evidence quality and correctness.
+
+Repeated issue IDs or missing inputs are counted. Three occurrences send work
+back to the coordinator and require a different approach before retrying that
+batch. Other independent work can continue. When no useful work can proceed, the
+coordinator requests input and the run pauses. Home shows what is missing and how
+to resume; optionally enter updated instructions before pressing **Continue**.
+Invalid structured updates also pause with a specific explanation, preserving
+accepted state for the coordinator to repair. Turn limits still apply.
+
+Home displays verified steps, work awaiting validation, blocked steps, the current
+batch and revision, and an expandable step list. History distinguishes the run
+status from the plan outcome. **Plan complete** requires every registered step
+to be verified; partial and blocked reports can finish the run without claiming
+plan completion. Each accepted role report/update is archived under
+`evidence/turn-NNNN/` inside the run directory, so shared filenames do not erase
+previous evidence. Handoffs carry the current batch and compact state summary;
+full state and older evidence stay available on disk. Saved follow-up context
+includes the structured state, but its approvals must be revalidated against the
+new run's actual workspace.
+
+The five role IDs/order and required handoff routes are part of this protocol.
+You can customize role prompts, names and models, but removing/reordering roles
+or removing required routes is rejected. Use a blank
+team for an unrestricted workflow. This preset does not commit, push or deploy.
+
+The earlier **Implement a Markdown plan** preset remains available:
+
+Choose **Implement a Markdown plan** in the web team picker. All five roles use
+Codex. Selecting this preset sets a 100-turn limit (agent executions, not plan
+steps); you can lower it before starting. Give the plan's path in your goal, for
+example: `Implement docs/IMPLEMENTATION_PLAN.md in dependency order. Review and
+test every batch. Preserve unrelated changes.` Choose the project folder and
+enable file edits.
+
+The Plan Coordinator keeps `PLAN_PROGRESS.md` with stable step IDs, dependencies,
+acceptance criteria, current batch, verified evidence, and remaining work. Each
+batch goes through Batch Implementer, Batch Reviewer, and Batch Tester. Findings
+go back for repair; verified batches return to the coordinator for the next batch.
+Plan Reporter produces `PLAN_OUTCOME.md` when all steps are verified or the team
+needs to report a blocker. Prompts require explicit COMPLETE/PARTIAL/BLOCKED
+verdicts and forbid treating skipped checks as passing. These judgments are made
+by the agents; the workflow enforces permitted routing and the turn limit.
+
+If the run reaches its limit, approve another block of turns to resume the same
+workflow. If you stop it or restart the server, use History's **Continue from this
+run**, select the same preset, and ask it to resume using the saved progress ledger.
+The coordinator is instructed to reconcile prior evidence with the current code
+before skipping previously verified steps. This preset does not commit, push, or
+deploy. New built-in presets are added to existing browser libraries without
+replacing saved team edits.
 
 ### Build on a previous run
 
@@ -139,6 +285,45 @@ and workspaces without resuming a provider conversation. It copies result files,
 not an entire repository. Missing originals cause a clear startup error; source
 files are limited to 100 MB total. History also supports downloading older results.
 
+### Improve Workbench from a run
+
+Open **Improve**, select a run (including one that is still running), and ask a
+question. **Review and discuss** launches an independent, read-only Codex session
+with the run snapshot, chat history and Workbench source. It does not take over,
+pause or stop the team being reviewed. **Stop this request** stops only this chat
+request. Conversations are saved locally; sending a message for a previously
+selected run/source folder resumes its saved conversation. A running run is
+captured again for each new message, so reviews describe the evidence available
+at that time.
+
+Choose **Prepare improvements** to produce a concrete patch. The server copies
+the current tracked and nonignored Workbench files into an isolated Git snapshot,
+including uncommitted changes, and the agent edits/tests that copy. It has no
+remote and no access to change the source checkout through its workspace sandbox.
+The page displays the exact diff, assistant-reported test commands/results and
+limitations. These reports are not independent verification; inspect them and
+the diff before applying. Failed/skipped reports do not enable Apply.
+
+After reviewing the diff, check the approval box and choose **Apply reviewed
+changes**. Applying is blocked while a team workflow is running, paused or stopping.
+The server checks every affected source and candidate file against the reviewed
+fingerprints, refusing stale patches rather than overwriting newer edits. It
+preserves unrelated files and the source Git index. **Revert this improvement**
+restores the pre-apply contents, provided the affected files have not changed
+again. Neither action commits, pushes, deploys or restarts the server. Restart
+manually when ready; packaged applications also need rebuilding from the updated
+source. Preparing a new proposal replaces the displayed proposal, so review or
+revert the current one first if needed.
+
+The source folder defaults to this repository. Packaged applications need a
+Workbench Git checkout selected under **Workbench source folder**. Git and a
+signed-in Codex CLI are required for preparation. Chats and candidates live beside
+web run history under `improvements/`; they can contain run logs and source copies.
+Snapshots are limited to 10 MB per file and 100 MB total, and reviewable patches to
+2 MB. This is a local development feature; the standalone HTML demo only displays
+the tab. After updating, let existing runs finish before restarting to enable its
+new server endpoints.
+
 `workflow_service.py` owns web orchestration without GUI imports. `handoff_protocol.py`
 contains the marker parser and validation shared with both desktop entry points.
 `run_history.py` handles saved records and prepares source material for follow-ups.
@@ -153,9 +338,13 @@ Run web integration tests without launching Codex or incurring model usage:
 python -m unittest discover -s tests -p test_web_workbench.py
 python -m unittest discover -s tests -p test_provider_auth.py
 python -m unittest discover -s tests -p test_workflow_service.py
+python -m unittest discover -s tests -p test_structured_plan.py
+python -m unittest discover -s tests -p test_improvement_service.py
 python -m unittest discover -s tests -p test_run_history.py
 node tests/test_live_adapter.cjs
+node tests/test_improve_ui.cjs
 node tests/test_role_deliverables.cjs
+node tests/test_markdown_plan_preset.cjs --v2
 node tests/test_document_preview.cjs
 ```
 

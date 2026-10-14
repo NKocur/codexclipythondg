@@ -39,3 +39,31 @@ field('agentHtml').value=''; field('agentPdf').value='';
 submit();
 assert.equal(vm.runInContext('agents[0].deliverables.length',context),0);
 console.log('Role deliverables: save, persistence normalization, cloning, validation and removal passed.');
+vm.runInContext(`
+let presets=[{id:'base',name:'Original team',roles:cloneRoles(agents)}],presetId='base';
+let running=false,events=[],artifacts=[],outcome=null,staleRun=false,current=0,trail=new Set();
+let allowReset=false,savedDraft=null;
+function isEdited(){return true;} function confirm(){return allowReset;}
+function toggleMenu(){} function hideTip(){} function showView(){}
+function currentPreset(){return presets.find(p=>p.id===presetId);}
+function persist(){savedDraft=JSON.stringify({presetId,agents,presets});}
+${script.slice(script.indexOf('function newBlankTeam('),script.indexOf('function showTip('))}
+`,context);
+assert.equal(vm.runInContext('newBlankTeam()',context),false);
+assert.equal(vm.runInContext('agents.length',context),1);
+vm.runInContext('allowReset=true;newBlankTeam()',context);
+assert.equal(vm.runInContext('agents.length',context),0);
+assert.equal(vm.runInContext('presetId',context),null);
+assert.equal(vm.runInContext('presets[0].roles.length',context),1);
+vm.runInContext(`
+const KEY='test',FIELDS=[];
+const BUILTIN_PRESETS=[{id:'new-builtin',name:'New built-in',roles:[]}];
+const validRole=a=>a&&typeof a.name==='string'&&typeof a.prompt==='string'&&typeof a.artifact==='string';
+const localStorage={getItem(){return savedDraft;}};
+agents=cloneRoles(presets[0].roles);presetId='base';
+${script.slice(script.indexOf('try{\n const s=JSON.parse(localStorage.getItem(KEY));'),script.indexOf('\ncleanRoutes();'))}
+`,context);
+assert.equal(vm.runInContext('agents.length',context),0);
+assert.equal(vm.runInContext('presetId',context),null);
+assert.equal(vm.runInContext('presets.some(p=>p.id==="new-builtin")',context),true);
+console.log('Blank team: creation, cancelled reset, preset preservation and empty draft reload passed.');

@@ -3,6 +3,7 @@ __pycache__/
 
 build/
 dist/
+.venv-tray/
 
 saved_sessions.json
 .codex-workbench-sessions/

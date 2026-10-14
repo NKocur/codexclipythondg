@@ -5,6 +5,7 @@ import json
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import time
 
@@ -72,7 +73,8 @@ class AuthService:
             args = ["login", "status"] if provider == "Codex" else ["auth", "status", "--json"]
             try:
                 response = subprocess.run([command, *args], capture_output=True, text=True,
-                                          encoding="utf-8", errors="replace", timeout=15)
+                                          encoding="utf-8", errors="replace", timeout=15,
+                                          creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0)
                 detail = response.stdout + response.stderr
                 if failure_kind(detail) == "environment":
                     state = result(provider, "environment", "The CLI cannot access its home directory. Start Workbench from your normal terminal.")

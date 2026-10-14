@@ -2,9 +2,18 @@
 (() => {
   'use strict';
   let token = '', latest = null, revision = -1, busy = false, connected = false;
+  let planWorkflow = null;
   let savedRuns = [], sourceRunId = '', historyChecked = 0;
   let viewingSaved = false, liveSnapshot = null, historyRequest = 0;
   const liveActive = () => ['running','paused','stopping'].includes(liveSnapshot?.run?.status);
+  const baseNewBlankTeam = newBlankTeam;
+  newBlankTeam = function (view='home') {
+    if (busy || liveActive()) return notify('Finish or stop the active run before creating a new team.',false);
+    if (!baseNewBlankTeam(view)) return;
+    viewingSaved = false; latest = null; revision = liveSnapshot?.revision ?? revision;
+    $('liveMode').value = 'team';
+    render();
+  };
   function previewResult(runId, name) {
     return window.WorkbenchPreview.open({name, token,
       url:'/api/preview?run='+encodeURIComponent(runId)+'&name='+encodeURIComponent(name),
@@ -54,6 +63,30 @@
   banner.innerHTML = '<div class="form-row"><label class="field"><span>Run</span><select id="liveMode"><option value="team">Whole team</option><option value="single">One agent</option></select></label><label class="field hidden" id="singleAgentField"><span>Codex agent</span><select id="liveAgent"></select></label><label class="field" id="turnLimitField"><span>Maximum agent turns</span><input id="turnLimit" type="number" min="1" max="100" value="20"></label></div><p id="liveConnection" style="font-size:13px" role="status">Connecting to the local runner…</p><p id="liveRunNote" style="font-size:12px;margin-top:5px">Teams share files and use the handoff rules shown below. Each agent starts with a fresh session.</p><button class="btn hidden" id="convertCodex" style="margin-top:10px">Use Codex for this team</button>';
   banner.insertAdjacentHTML('beforeend', '<div style="display:flex;gap:10px;align-items:center;margin-top:12px;flex-wrap:wrap"><button class="btn" id="manageSignIn">Provider sign-in</button><button class="btn primary hidden" id="authRecovery">Sign in to Codex</button><span id="authSummary" role="status" style="font-size:13px"></span></div>');
   $('homeView').prepend(banner);
+  const planCard = document.createElement('section');
+  planCard.className = 'card hidden';
+  planCard.style.cssText = 'padding:20px;margin-bottom:20px';
+  planCard.id = 'planProgress';
+  planCard.innerHTML = '<h2>Plan progress</h2><div id="planProgressBody" style="margin-top:12px"></div><div id="planResume" class="hidden" style="margin-top:16px"><label class="field"><span>What changed or what should the team try next? (optional)</span><textarea id="planResumeNote" rows="3" maxlength="6000" placeholder="For example: the acceptance image is now available at…"></textarea></label><p style="font-size:13px;margin-top:8px">Continue sends your update to the coordinator. Stop preserves the run for a follow-up.</p></div>';
+  banner.after(planCard);
+  function renderPlan() {
+    const plan = latest?.plan;
+    planCard.classList.toggle('hidden', !plan);
+    if (!plan) return;
+    const steps = plan.steps || [], batches = plan.batches || [];
+    const count = status => steps.filter(s=>s.status===status).length;
+    const verified = count('verified'), blocked = count('blocked');
+    const awaiting = count('awaiting_review') + count('awaiting_tests');
+    const batch = batches.find(b=>b.id===plan.current);
+    const ended = !['running','paused','stopping'].includes(latest.status);
+    const label = plan.outcome === 'complete' ? 'Plan complete' : ended ? `Run ${latest.status==='completed'?'finished':latest.status} · Plan ${plan.outcome === 'blocked' ? 'blocked' : 'incomplete'}` : 'Plan in progress';
+    const needs = [...(plan.needs_input || []), ...batches.flatMap(b=>(b.blockers || []).map(x=>({...x,batch:b.id})))];
+    const unique = needs.filter((x,i)=>needs.findIndex(y=>y.id===x.id && y.batch===x.batch)===i);
+    const open = $('planSteps')?.open;
+    $('planProgressBody').innerHTML = `<p><strong>${esc(label)}</strong></p><p style="margin:8px 0">${verified} of ${steps.length} steps verified · ${awaiting} awaiting validation · ${blocked} blocked</p><progress value="${verified}" max="${Math.max(1,steps.length)}" aria-label="Verified plan steps" style="width:100%"></progress>${batch?`<p style="margin:12px 0"><strong>${esc(batch.id)}: ${esc(batch.title)}</strong><br>${esc(batch.status.replaceAll('_',' '))} · Revision ${batch.revision}${batch.attention?' · Repeated issue needs a different approach':''}</p>`:''}${plan.notice?`<p role="status" style="margin:12px 0">${esc(plan.notice)}</p>`:''}${unique.length?'<h3 style="margin-top:16px">Needs input</h3>'+unique.map(b=>`<div style="margin-top:10px"><strong>${b.batch?esc(b.batch)+': ':''}${esc(b.need)}</strong><p>${esc(b.resume)}</p></div>`).join(''):''}<details id="planSteps" ${open?'open':''} style="margin-top:16px"><summary>All plan steps</summary><ul style="padding-left:20px;margin-top:8px">${steps.map(s=>`<li style="margin:6px 0"><strong>${esc(s.id)}</strong> ${esc(s.title)} — ${esc(s.status.replaceAll('_',' '))}</li>`).join('')}</ul></details>`;
+    $('planResume').classList.toggle('hidden', viewingSaved || latest.status !== 'paused');
+    if (ended) $('runHeadline').textContent = label;
+  }
   const authDialog = document.createElement('dialog');
   authDialog.id = 'authDialog';
   authDialog.setAttribute('aria-labelledby','authTitle');
@@ -84,7 +117,7 @@
   document.querySelector('#historyView .section-head p').textContent = 'Saved runs, results, and new work built on earlier results.';
   history = [];
   renderHistory = function () {
-    $('historyList').innerHTML = savedRuns.length ? savedRuns.map(r=>`<div class="history-row"><div style="flex:1;min-width:0"><strong>${esc(r.goal)}</strong><p>${esc(new Date(r.started*1000).toLocaleString())} · ${esc(r.status)} · ${r.count} files${r.source_run_id?' · Follow-up':''}</p><small>${esc((r.team||[]).join(' → '))}</small></div><button class="btn" data-saved-view="${esc(r.id)}">View</button><button class="btn primary" data-saved-continue="${esc(r.id)}" ${running||busy||['running','paused','stopping'].includes(r.status)?'disabled':''}>Continue from this run</button></div>`).join('') : '<div class="empty">Your saved runs will appear here.</div>';
+    $('historyList').innerHTML = savedRuns.length ? savedRuns.map(r=>`<div class="history-row"><div style="flex:1;min-width:0"><strong>${esc(r.goal)}</strong><p>${esc(new Date(r.started*1000).toLocaleString())} · ${esc(r.status)}${r.plan_outcome?' · Plan '+esc(r.plan_outcome.replaceAll('_',' ')):''} · ${r.count} files${r.source_run_id?' · Follow-up':''}</p><small>${esc((r.team||[]).join(' → '))}</small></div><button class="btn" data-saved-view="${esc(r.id)}">View</button><button class="btn primary" data-saved-continue="${esc(r.id)}" ${running||busy||['running','paused','stopping'].includes(r.status)?'disabled':''}>Continue from this run</button></div>`).join('') : '<div class="empty">Your saved runs will appear here.</div>';
     $('sourceRun').innerHTML = '<option value="">Start fresh</option>'+savedRuns.filter(r=>!['running','paused','stopping'].includes(r.status)).map(r=>`<option value="${esc(r.id)}">${esc(new Date(r.started*1000).toLocaleString())} · ${esc(r.goal.slice(0,100))}</option>`).join('');
     $('sourceRun').value = sourceRunId;
     $('sourceRun').disabled = running || busy;
@@ -152,7 +185,8 @@
     renderHistory();
     const team = $('liveMode').value === 'team';
     $('runButton').innerHTML = running ? (waiting?'Continue':latest?.pause_requested?'Pausing after this agent':latest?.team?'Pause after this agent':'Running selected agent') : team?'Run team':'Run selected agent';
-    $('runButton').disabled = busy || !connected || (running ? latest?.status==='stopping'||(latest?.pause_requested&&!waiting)||(!latest?.team&&!waiting) : team?agents.some(a=>a.provider!=='Codex'):!picker.value);
+    if (waiting && latest?.pause_reason==='turn_limit') $('runButton').innerHTML = `Allow ${latest.turn_budget || 20} more turns`;
+    $('runButton').disabled = busy || !connected || (running ? latest?.status==='stopping'||(latest?.pause_requested&&!waiting)||(!latest?.team&&!waiting) : team?!agents.length||agents.some(a=>a.provider!=='Codex'):!picker.value);
     $('runBarMain').innerHTML = $('runButton').innerHTML;
     $('runBarMain').disabled = $('runButton').disabled;
     $('stopButton').disabled = busy || latest?.status === 'stopping';
@@ -171,12 +205,27 @@
       $('runHeadline').textContent = waiting ? `Ready for ${next?.name || 'the next agent'}` : `${latest.agent.name} · ${latest.status}`;
       $('runHelp').textContent = latest.error || (latest.team ? (waiting?'Review the results, then Continue.':`${latest.turns?.length||0} turns finished · Limit ${latest.max_turns} · Files: ${latest.artifact_dir}`) : 'This is a single-agent run. Other teammates are not started.');
       if (latest.history_error) $('runHelp').textContent += ' '+latest.history_error;
+      if (waiting && latest.pause_reason==='turn_limit') {
+        $('runHeadline').textContent = 'Turn limit reached — continue?';
+        $('runHelp').textContent = `${latest.turns.length} turns finished. Your work is saved. Allow ${latest.turn_budget || 20} more turns to resume with ${next?.name || 'the next agent'}, or choose Stop. No agent is running while you decide.`;
+      }
       $('runBarTitle').textContent = $('runHeadline').textContent;
       $('runBarSub').textContent = latest.team?'Codex team workflow':'One Codex agent';
     } else {
       $('runHeadline').textContent = team?'Your team is ready':'Ready for a real Codex run';
       $('runHelp').textContent = team?'Check your team and project folder. Team runs need permission to edit files.':'Choose a Codex agent above, set your project folder, then run.';
+      if (!agents.length) { $('runHeadline').textContent='Build your team'; $('runHelp').textContent='Add your first teammate below Your team. Save as a new team when you are ready to name it.'; }
     }
+    renderPlan();
+    if (waiting && ['needs_input','plan_validation'].includes(latest?.pause_reason)) {
+      $('runHeadline').textContent = latest.pause_reason==='needs_input'?'Your input is needed':'Batch validation needs attention';
+      $('runHelp').textContent = latest.plan?.notice || 'Review plan progress, then continue with updated instructions.';
+    }
+    if (!running && team && agents.some(a=>a.workflow==='markdown-plan-v2') && planWorkflow!=='markdown-plan-v2') {
+      $('runButton').disabled = $('runBarMain').disabled = true;
+      $('liveRunNote').textContent = 'This preset needs the updated server. Let the current run finish, then restart Workbench to enable verified batches.';
+    }
+    if (latest) $('runBarTitle').textContent = $('runHeadline').textContent;
   };
 
   async function api(path, data) {
@@ -327,6 +376,12 @@
       showAuthRequired({provider:latest.auth_provider,state:'sign_in_required',message:'This run was rejected because its credentials were missing or expired. Sign in, then retry the run.',command:latest.auth_provider==='Codex'?'codex.cmd login':'claude.cmd auth login'});
     }
     running = ['running','stopping','paused'].includes(latest.status);
+    // Keep an empty team draft across refreshes instead of replacing it with
+    // the server's last completed team. History can still reopen that run.
+    if (!historical && !running && !agents.length) {
+      latest = null; paused = waiting = false; outcome = null; events = []; artifacts = [];
+      render(); return;
+    }
     if (newRun && running) {
       sourceRunId = latest.source_run_id || '';
       $('sourceRunHint').textContent = latest.source_goal ? 'Building on: '+latest.source_goal : 'Choose earlier work, then pick any team and describe what to do next.';
@@ -337,7 +392,7 @@
     if (latest.team && latest.agents) {
       agents = latest.agents.map(a=>({...a}));
       $('liveMode').value='team';
-      $('turnLimit').value=latest.max_turns;
+      $('turnLimit').value=Math.min(100,latest.max_turns);
       if (!waiting || newRun) $('autoAdvance').checked=latest.auto_advance;
       trail = new Set(latest.trail || []);
     }
@@ -371,15 +426,22 @@
     if (running) {
       if (!latest?.team || latest.status==='stopping' || (latest.pause_requested&&!waiting)) return;
       busy=true;render();
-      try { receive(await api('/api/control',{id:latest.id,action:waiting?'continue':'pause',auto_advance:$('autoAdvance').checked})); }
+      try {
+        const extend=waiting && latest.pause_reason==='turn_limit';
+        const note = waiting && latest.plan ? $('planResumeNote').value.trim() : '';
+        receive(await api('/api/control',{id:latest.id,action:extend?'extend':waiting?'continue':'pause',auto_advance:$('autoAdvance').checked,...(extend?{additional_turns:latest.turn_budget || 20}:{}),...(note?{note}:{})}));
+        $('planResumeNote').value = '';
+      }
       catch(error){notify(error.message,false);}
       finally{busy=false;render();}
       return;
     }
     const team = $('liveMode').value==='team';
+    if (team && agents.some(a=>a.workflow==='markdown-plan-v2') && planWorkflow!=='markdown-plan-v2') return notify('Let the active run finish, then restart Workbench to enable verified batches.',false);
     const agent = agents.find(a => a.id === picker.value);
     if (!team && (!agent || agent.provider !== 'Codex')) return notify('Select a Codex agent.', false);
     if (team && agents.some(a=>a.provider!=='Codex')) return notify('Switch this team to Codex first.',false);
+    if (team && !agents.length) return notify('Add at least one teammate before running.',false);
     busy = true; render();
     try {
       const snapshot = await api('/api/run', {goal:$('goal').value,cwd:$('workspacePath').value,sandbox:$('sandbox').value,source_run_id:sourceRunId||null,...(team?{agents,auto_advance:$('autoAdvance').checked,max_turns:Number($('turnLimit').value)}:{agent})});
@@ -411,6 +473,7 @@
     try {
       if (!connected) {
         const config = await api('/api/bootstrap');
+        planWorkflow = config.plan_workflow || null;
         token = config.token; connected = true; revision = -1;
         let workspace = null;
         try { workspace = JSON.parse(localStorage.getItem('workbench-live-workspace')); } catch {}
