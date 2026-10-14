@@ -123,12 +123,15 @@ class ImprovementTests(unittest.TestCase):
         self.service.runner.done(1, 'Test finished')
 
     def test_apply_rolls_back_on_write_error(self):
+        # The service resolves source paths. Windows TEMP can use a short-name
+        # alias; exercise an equivalent noncanonical spelling on every machine.
+        self.source = self.source / '..' / self.source.name
         proposal = self.prepare()
         self.main_runner.done(0, '')
         original = self.service._write
         calls = []
         def fail_once(path, body):
-            if path.is_relative_to(self.source):
+            if path.resolve().is_relative_to(self.source.resolve()):
                 calls.append(path)
                 if len(calls) == 2:
                     raise OSError('Simulated write failure')
@@ -139,6 +142,7 @@ class ImprovementTests(unittest.TestCase):
         self.assertEqual((self.source / 'workflow_service.py').read_text(), 'workflow = 1\n')
         self.assertFalse((self.source / 'new_test.py').exists())
         self.assertFalse(proposal['applied'])
+        self.assertEqual(len(calls), 4)  # two attempted writes, then both restored
 
     def test_revert_preserves_unrelated_work_and_refuses_newer_edits(self):
         proposal = self.prepare()
