@@ -35,7 +35,7 @@ jobs:
         run: ./scripts/build_tray.ps1 -InstallDeps
       - name: Test web and tray behavior
         run: |
-          $suites = @('test_workbench_tray.py', 'test_web_workbench.py', 'test_provider_auth.py', 'test_workflow_service.py', 'test_run_history.py', 'test_plan_workflow.py', 'test_structured_plan.py', 'test_improvement_service.py')
+          $suites = @('test_workbench_tray.py', 'test_web_workbench.py', 'test_provider_auth.py', 'test_workflow_service.py', 'test_run_history.py', 'test_plan_workflow.py', 'test_structured_plan.py', 'test_improvement_service.py', 'test_run_diagnostics.py')
           foreach ($suite in $suites) {
             & ./.venv-tray/Scripts/python.exe -m unittest discover -s tests -p $suite
             if ($LASTEXITCODE -ne 0) { throw "Failed: $suite" }

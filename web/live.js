@@ -2,7 +2,7 @@
 (() => {
   'use strict';
   let token = '', latest = null, revision = -1, busy = false, connected = false;
-  let planWorkflow = null;
+  let planWorkflow = null, resumePaused = false;
   let savedRuns = [], sourceRunId = '', historyChecked = 0;
   let viewingSaved = false, liveSnapshot = null, historyRequest = 0;
   const liveActive = () => ['running','paused','stopping'].includes(liveSnapshot?.run?.status);
@@ -60,8 +60,9 @@
   const banner = document.createElement('section');
   banner.className = 'card';
   banner.style.cssText = 'padding:16px 20px;margin-bottom:20px';
-  banner.innerHTML = '<div class="form-row"><label class="field"><span>Run</span><select id="liveMode"><option value="team">Whole team</option><option value="single">One agent</option></select></label><label class="field hidden" id="singleAgentField"><span>Codex agent</span><select id="liveAgent"></select></label><label class="field" id="turnLimitField"><span>Maximum agent turns</span><input id="turnLimit" type="number" min="1" max="100" value="20"></label></div><p id="liveConnection" style="font-size:13px" role="status">Connecting to the local runner…</p><p id="liveRunNote" style="font-size:12px;margin-top:5px">Teams share files and use the handoff rules shown below. Each agent starts with a fresh session.</p><button class="btn hidden" id="convertCodex" style="margin-top:10px">Use Codex for this team</button>';
+  banner.innerHTML = '<div class="form-row"><label class="field"><span>Run</span><select id="liveMode"><option value="team">Whole team</option><option value="single">One agent</option></select></label><label class="field hidden" id="singleAgentField"><span>Codex agent</span><select id="liveAgent"></select></label><label class="field" id="turnLimitField"><span>Maximum agent turns</span><input id="turnLimit" type="number" min="1" max="100" value="20"></label></div><p id="liveConnection" style="font-size:13px" role="status">Connecting to the local runner…</p><p id="liveRunNote" style="font-size:12px;margin-top:5px">Teams share files and use the handoff rules shown below. Each role retains its own session within this run.</p><button class="btn hidden" id="convertCodex" style="margin-top:10px">Use Codex for this team</button>';
   banner.insertAdjacentHTML('beforeend', '<div style="display:flex;gap:10px;align-items:center;margin-top:12px;flex-wrap:wrap"><button class="btn" id="manageSignIn">Provider sign-in</button><button class="btn primary hidden" id="authRecovery">Sign in to Codex</button><span id="authSummary" role="status" style="font-size:13px"></span></div>');
+  banner.insertAdjacentHTML('beforeend', '<div id="capacityRecovery" class="hidden" style="margin-top:16px"><label class="field"><span>Retry model (blank uses the provider default)</span><input id="capacityModel" maxlength="120" placeholder="Enter a model ID"></label><p>No automatic retries. Changing this value updates only the affected role for this run.</p></div>');
   $('homeView').prepend(banner);
   const planCard = document.createElement('section');
   planCard.className = 'card hidden';
@@ -117,7 +118,7 @@
   document.querySelector('#historyView .section-head p').textContent = 'Saved runs, results, and new work built on earlier results.';
   history = [];
   renderHistory = function () {
-    $('historyList').innerHTML = savedRuns.length ? savedRuns.map(r=>`<div class="history-row"><div style="flex:1;min-width:0"><strong>${esc(r.goal)}</strong><p>${esc(new Date(r.started*1000).toLocaleString())} · ${esc(r.status)}${r.plan_outcome?' · Plan '+esc(r.plan_outcome.replaceAll('_',' ')):''} · ${r.count} files${r.source_run_id?' · Follow-up':''}</p><small>${esc((r.team||[]).join(' → '))}</small></div><button class="btn" data-saved-view="${esc(r.id)}">View</button><button class="btn primary" data-saved-continue="${esc(r.id)}" ${running||busy||['running','paused','stopping'].includes(r.status)?'disabled':''}>Continue from this run</button></div>`).join('') : '<div class="empty">Your saved runs will appear here.</div>';
+    $('historyList').innerHTML = savedRuns.length ? savedRuns.map(r=>`<div class="history-row"><div style="flex:1;min-width:0"><strong>${esc(r.goal)}</strong><p>${esc(new Date(r.started*1000).toLocaleString())} · ${esc(r.status)}${r.plan_outcome?' · Plan '+esc(r.plan_outcome.replaceAll('_',' ')):''} · ${r.count} files${r.source_run_id?' · Follow-up':''}</p><small>${esc((r.team||[]).join(' → '))}</small></div>${resumePaused && r.status==='suspended'?`<button class="btn primary" data-saved-resume="${esc(r.id)}" ${liveActive()||busy?'disabled':''}>Resume paused run</button>`:''}<button class="btn" data-saved-view="${esc(r.id)}">View</button><button class="btn primary" data-saved-continue="${esc(r.id)}" ${running||busy||['running','paused','stopping'].includes(r.status)?'disabled':''}>Continue from this run</button></div>`).join('') : '<div class="empty">Your saved runs will appear here.</div>';
     $('sourceRun').innerHTML = '<option value="">Start fresh</option>'+savedRuns.filter(r=>!['running','paused','stopping'].includes(r.status)).map(r=>`<option value="${esc(r.id)}">${esc(new Date(r.started*1000).toLocaleString())} · ${esc(r.goal.slice(0,100))}</option>`).join('');
     $('sourceRun').value = sourceRunId;
     $('sourceRun').disabled = running || busy;
@@ -143,8 +144,19 @@
   }
   $('sourceRun').onchange = () => chooseSource($('sourceRun').value);
   $('historyList').addEventListener('click', async e => {
-    const button = e.target.closest('[data-saved-view],[data-saved-continue]');
+    const button = e.target.closest('[data-saved-view],[data-saved-continue],[data-saved-resume]');
     if (!button || button.disabled) return;
+    if (button.dataset.savedResume) {
+      busy = true; renderHistory();
+      try {
+        const snapshot = await api('/api/resume', {id:button.dataset.savedResume});
+        ++historyRequest; viewingSaved = false; revision = -1; receive(snapshot);
+        showView('home');
+        notify('Paused run restored. Press Continue when ready.');
+      } catch(error) { notify(error.message,false); }
+      finally { busy = false; renderHistory(); render(); }
+      return;
+    }
     if (button.dataset.savedContinue) return chooseSource(button.dataset.savedContinue);
     try {
       const request = ++historyRequest;
@@ -176,7 +188,7 @@
     $('autoAdvance').disabled = !team || (running && !waiting) || busy;
     $('convertCodex').classList.toggle('hidden',!team || !agents.some(a=>a.provider!=='Codex'));
     $('convertCodex').disabled = running || busy;
-    $('liveRunNote').textContent = team ? 'Codex-only team execution. Each turn must save its output file. Pause waits for the current agent to finish; Stop ends it immediately.' : 'Runs only the selected Codex agent, with a fresh session.';
+    $('liveRunNote').textContent = team ? 'Codex-only team execution. Each turn must save its output file. Pause waits for the current agent to finish; Stop ends it immediately.' : 'Runs only the selected Codex agent, with its own session.';
   }
 
   render = function () {
@@ -217,8 +229,21 @@
       if (!agents.length) { $('runHeadline').textContent='Build your team'; $('runHelp').textContent='Add your first teammate below Your team. Save as a new team when you are ready to name it.'; }
     }
     renderPlan();
+    const capacity = waiting && latest?.pause_reason==='model_capacity' && !viewingSaved;
+    $('capacityRecovery').classList.toggle('hidden', !capacity);
+    if (capacity) {
+      $('runButton').innerHTML = $('runBarMain').innerHTML = 'Retry agent';
+      $('runHeadline').textContent = 'Model is at capacity';
+      $('runHelp').textContent = 'Progress is saved. Retry later, or enter another model and retry. Partial file changes will be checked before continuing.';
+    }
+    if (waiting && latest?.pause_reason==='provider_transient' && !viewingSaved) {
+      $('runButton').innerHTML = $('runBarMain').innerHTML = 'Retry agent';
+      $('runHeadline').textContent = 'Provider connection interrupted';
+      $('runHelp').textContent = 'The connection or provider service failed after retries. Progress is saved. Retry when ready; the same agent will check partial work before continuing.';
+    }
     if (waiting && ['needs_input','plan_validation'].includes(latest?.pause_reason)) {
       $('runHeadline').textContent = latest.pause_reason==='needs_input'?'Your input is needed':'Batch validation needs attention';
+      if (latest.pause_reason==='plan_validation') $('runButton').innerHTML = $('runBarMain').innerHTML = 'Send back to coordinator';
       $('runHelp').textContent = latest.plan?.notice || 'Review plan progress, then continue with updated instructions.';
     }
     if (!running && team && agents.some(a=>a.workflow==='markdown-plan-v2') && planWorkflow!=='markdown-plan-v2') {
@@ -362,6 +387,7 @@
       if (snapshot.revision === revision) return;
       revision = snapshot.revision;
     }
+    if (snapshot.run?.pause_reason==='model_capacity' && (latest?.pause_reason!=='model_capacity' || snapshot.run?.id!==latest?.id)) $('capacityModel').value = snapshot.run.agent.model || '';
     const newRun = snapshot.run?.id !== latest?.id;
     const changedStatus = snapshot.run?.status !== latest?.status;
     latest = snapshot.run;
@@ -424,12 +450,12 @@
     if (busy || !connected) return;
     if (viewingSaved) return chooseSource(latest.id);
     if (running) {
-      if (!latest?.team || latest.status==='stopping' || (latest.pause_requested&&!waiting)) return;
+      if ((!latest?.team && !waiting) || latest.status==='stopping' || (latest.pause_requested&&!waiting)) return;
       busy=true;render();
       try {
         const extend=waiting && latest.pause_reason==='turn_limit';
         const note = waiting && latest.plan ? $('planResumeNote').value.trim() : '';
-        receive(await api('/api/control',{id:latest.id,action:extend?'extend':waiting?'continue':'pause',auto_advance:$('autoAdvance').checked,...(extend?{additional_turns:latest.turn_budget || 20}:{}),...(note?{note}:{})}));
+        receive(await api('/api/control',{id:latest.id,action:extend?'extend':waiting?'continue':'pause',auto_advance:$('autoAdvance').checked,...(extend?{additional_turns:latest.turn_budget || 20}:{}),...(note?{note}:{}),...(waiting && latest.pause_reason==='model_capacity'?{model:$('capacityModel').value.trim()}:{})}));
         $('planResumeNote').value = '';
       }
       catch(error){notify(error.message,false);}
@@ -474,6 +500,7 @@
       if (!connected) {
         const config = await api('/api/bootstrap');
         planWorkflow = config.plan_workflow || null;
+        resumePaused = !!config.resume_paused;
         token = config.token; connected = true; revision = -1;
         let workspace = null;
         try { workspace = JSON.parse(localStorage.getItem('workbench-live-workspace')); } catch {}

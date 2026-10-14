@@ -211,13 +211,16 @@ def apply_update(previous, update, role, turn, root, report):
             for check in checks:
                 if not isinstance(check, dict) or check.get('criterion') not in batch['acceptance']:
                     raise ValueError('Every check must reference an exact batch acceptance criterion.')
-                if check.get('result') not in ('passed', 'failed', 'skipped'):
-                    raise ValueError('Check result must be passed, failed or skipped.')
+                allowed_results = ('passed', 'failed', 'skipped', 'pending_tests') if role == 'batch-reviewer' else ('passed', 'failed', 'skipped')
+                if check.get('result') not in allowed_results:
+                    raise ValueError('Invalid check result. Only review may defer execution with pending_tests; testing must report actual results.')
                 text(check.get('evidence'), 'Check evidence', 4000)
-            if verdict == 'passed' and (batch['blockers'] or
-                    {c['criterion'] for c in checks if c['result'] == 'passed'} != set(batch['acceptance']) or
-                    any(c['result'] != 'passed' for c in checks)):
-                raise ValueError('Passing requires evidence for every acceptance criterion, without skipped checks or blockers.')
+            acceptable = {'passed', 'pending_tests'} if role == 'batch-reviewer' else {'passed'}
+            missing = set(batch['acceptance']) - {c['criterion'] for c in checks if c['result'] in acceptable}
+            if verdict == 'passed' and (batch['blockers'] or missing or any(c['result'] not in acceptable for c in checks)):
+                results = {c['criterion']: c['result'] for c in checks}
+                detail = '; '.join(f'{criterion} ({results.get(criterion, "missing")})' for criterion in sorted(missing))[:2000] or 'reported blockers or failed/skipped checks'
+                raise ValueError(f'{role} cannot pass: {detail}. Review may use pending_tests only for execution owned by the tester. Required tests still must pass before completion.')
             field = 'review' if role == 'batch-reviewer' else 'tests'
             if role == 'batch-tester' and verdict == 'passed' and not (batch['review'] and batch['review']['verdict'] == 'passed'):
                 raise ValueError('Passing tests cannot verify a batch without current independent review approval.')
@@ -252,7 +255,7 @@ def prompt(state, role, turn, directory):
     schemas = {
         'plan-coordinator': 'First visit: add "source":"docs/PLAN.md", "steps":[{"id":"S1","title":"Short original requirement","depends_on":[]}]. Thereafter omit source/steps. Use "action":"select", "batch":"B001". For NEW batches also provide "title", "steps_in_batch":["S1"], "acceptance":["Exact measurable criterion"]. Resume an existing batch by ID, then hand off directly to the role it needs. To separate independent steps from an existing blocked batch, create a NEW batch with "split_from":"old-batch-id" and a strict subset of its steps; approvals are not inherited. For repeated failures include a genuinely different "strategy". Use "action":"wait", "blockers":[{"id":"env","need":"Specific missing input","resume":"What to supply or change"}] ONLY when no independent work remains; the service pauses for user input. Or use "action":"report" to finish with a complete/partial/blocked report.',
         'batch-implementer': 'Provide "batch":"B001", "files":["workspace/relative/changed-file.py"], "blockers":[]. List EVERY changed product, test and documentation file (including deletions), excluding run bookkeeping. Service increments revision and fingerprints files; never copy old approval. A blocked submission goes to the coordinator.',
-        'batch-reviewer': 'Provide "batch":"B001", "revision":1, "verdict":"passed|failed|blocked", "checks":[{"criterion":"Exact acceptance criterion","result":"passed|failed|skipped","evidence":"Specific inspected diff/test evidence"}], "blockers":[], "issues":["stable-finding-id"] for failed/blocked verdicts. Inspect actual files and verify the implementation file list is exhaustive. Passed review routes to tester; failures to implementer; blockers/repeated failures to coordinator.',
+        'batch-reviewer': 'Provide "batch":"B001", "revision":1, "verdict":"passed|failed|blocked", "checks":[{"criterion":"Exact acceptance criterion","result":"passed|pending_tests|failed|skipped","evidence":"Specific inspected diff/test evidence"}], "blockers":[], "issues":["stable-finding-id"] for failed/blocked verdicts. Inspect actual files and verify the implementation file list is exhaustive. Passed review routes to tester; failures to implementer; blockers/repeated failures to coordinator.',
         'batch-tester': 'Provide "batch":"B001", "revision":1, "verdict":"passed|failed|blocked", "checks":[{"criterion":"Exact acceptance criterion","result":"passed|failed|skipped","evidence":"Command, exit status, observed result and evidence path"}], "blockers":[], "issues":["stable-finding-id"] for failed/blocked verdicts. Do not modify product/tests: request changes through implementer so review remains current. Passing requires current review and all criteria passed. Diagnostic testing of blocked work may report blocked/failed but cannot verify it.',
         'plan-reporter': 'Provide "outcome":"complete|partial|blocked", "blockers":[]. Complete is rejected unless every registered step has matching review and passing tests. Ensure the registered step inventory covers the entire source plan; report partial if any requirement is missing.',
     }
@@ -265,4 +268,30 @@ def prompt(state, role, turn, directory):
             'For coordinator wait, include the normal final handoff to Plan Reporter; the service pauses before starting it. '
             'Group related steps into meaningful reviewable outcomes; separate environment-gated acceptance from independent steps before assigning batches. '
             'Retain required repository checks. Never treat missing or skipped checks as passed.\n'
+            'Efficiency rules override older role bookkeeping instructions: use BATCH_CONTEXT.json for the selected batch, '
+            'current turn and current evidence; resumed session memory never overrides current accepted state. '
+            'server-owned file fingerprints, revision and receipts. Do not create whole-repository hash inventories, '
+            'BATCH_CONTEXT.command_log automatically records this turn command starts/completions, elapsed times, '
+            'exit codes and the last 8000 output characters (bounded to about 2 MiB per turn). '
+            'Reference it for results instead of writing command-capture scripts; use a targeted output file for larger required evidence. '
+            'duplicate the plan, or write custom capture/link-audit frameworks. Use existing repository tools. '
+            'Report only changed-file rationale, concrete findings and concise evidence links. '
+            'Read only relevant sections and diffs; expand inspection when a dependency or finding requires it.\n'
+            'Coordinator: choose a cohesive feature or milestone spanning related steps, not a single prose change. '
+            'Dispatch directly to the needed role. Acceptance criteria describe product outcomes; review/test receipt '
+            'ordering is enforced by the service and must not be another acceptance criterion. '
+            'No repeat inventory after initialization. Do not restart verified steps without relevant input drift.\n'
+            'Implementer: retain context across repairs, implement the complete selected outcome and run focused checks. '
+            'Leave comprehensive acceptance execution to the tester unless repository instructions require it now.\n'
+            'Reviewer: independently inspect actual changes, correctness, risk and test adequacy. Do not routinely rerun '
+            'the full suite or duplicate the tester. For criteria whose execution belongs to the tester, use result '
+            '"pending_tests" with evidence of the reviewed implementation/test coverage and what remains to execute. '
+            'This permits review approval only, never batch completion. Failed/skipped required review checks still block.\n'
+            'Tester: own comprehensive acceptance and required repository checks. Every acceptance criterion must pass '
+            'with concrete evidence before verification; pending_tests is not a valid tester result. '
+            'Reuse unchanged applicable evidence when permitted by repository requirements; rerun for changed inputs, '
+            'unresolved failures, environment changes or explicit independent-execution requirements.\n'
+            'Follow-up source/ contains supporting evidence and a source-evidence-manifest.json at the run root. '
+            'Reconcile its files and environment before reuse; do not invent receipts or restart work just because '
+            'the evidence came from another run. Historical claims alone do not constitute current acceptance.\n'
             f'Accepted state summary:\n{json.dumps(summary, ensure_ascii=False)}\n')

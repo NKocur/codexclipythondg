@@ -167,26 +167,26 @@ class TrayHost:
             return
         if self.server:
             run = self.server.service.snapshot()['run']
-            confirmed = bool(run and run['status'] in ACTIVE) or self.server.improvements.active() is True
+            confirmed = bool(run and run['status'] in {'running', 'stopping'}) or self.server.improvements.active() is True
             if confirmed:
                 answer = ctypes.windll.user32.MessageBoxW(None,
-                    'An agent workflow or improvement request is active or waiting. Stop it and quit Workbench?\nCompleted work will remain saved.',
+                    'An agent workflow or improvement request is active. Stop it and quit Workbench?\nCompleted work and paused runs will remain saved.',
                     APP_NAME, 0x00000004 | 0x00000030 | 0x00000100)
                 if answer != 6:
                     return
             with self.server.service.lock:
                 run = self.server.service.snapshot()['run']
-                if (bool(run and run['status'] in ACTIVE) or self.server.improvements.active() is True) and not confirmed:
+                if (bool(run and run['status'] in {'running', 'stopping'}) or self.server.improvements.active() is True) and not confirmed:
                     self.icon.notify('A workflow just started. Choose Quit again to stop it.', APP_NAME)
                     return
                 self.quitting = True
                 # Reject new runs while shutdown is underway.
                 self.server.closing = True
-                if run and run['status'] in ACTIVE:
+                if run and run['status'] in {'running', 'stopping'}:
                     self.server.service.stop(run['id'])
             self.server.improvements.close()
             deadline = time.monotonic() + 12
-            while (self.server.service.snapshot()['run'] and self.server.service.snapshot()['run']['status'] in ACTIVE) or self.server.improvements.active() is True:
+            while (self.server.service.snapshot()['run'] and self.server.service.snapshot()['run']['status'] in {'running', 'stopping'}) or self.server.improvements.active() is True:
                 if time.monotonic() >= deadline:
                     self.quitting = False
                     self.server.closing = False
@@ -222,6 +222,7 @@ def self_test(output):
     """Exercise the packaged assets on a temporary port; never touch port 8765."""
     import tempfile
     import pystray
+    import psutil
     from document_preview import render_markdown
     from web_workbench import WorkbenchServer
     with tempfile.TemporaryDirectory() as directory:
@@ -236,6 +237,7 @@ def self_test(output):
             assert '<h1>Check</h1>' in render_markdown('# Check')
             assert tray_image().size == (64, 64)
             assert pystray.Icon
+            assert psutil.Process().memory_info().rss > 0
             Path(output).write_text(json.dumps({'ok':True,'frozen':bool(getattr(sys,'frozen',False)), 'port':server.server_port}), encoding='utf-8')
         finally:
             server.shutdown(); server.server_close(); thread.join(5)

@@ -78,6 +78,43 @@ class StructuredPlanTests(unittest.TestCase):
         self.assertEqual(run['pause_reason'], 'plan_validation')
         self.assertNotEqual(run['plan']['outcome'], 'complete')
 
+    def test_review_can_defer_execution_but_testing_cannot(self):
+        self.initialize()
+        self.implement()
+        self.finish(self.verdict(result='pending_tests'), 'Batch Tester')
+        self.assertEqual(self.service.run['plan']['steps'][0]['status'], 'awaiting_tests')
+        self.assertEqual(self.service.run['agent']['id'], 'batch-tester')
+        run = self.finish(self.verdict(result='pending_tests'), 'Plan Coordinator')
+        self.assertEqual(run['pause_reason'], 'plan_validation')
+        self.assertNotEqual(run['plan']['steps'][0]['status'], 'verified')
+
+    def test_deferred_review_then_passing_tests_verifies(self):
+        self.initialize()
+        self.implement()
+        self.finish(self.verdict(result='pending_tests'), 'Batch Tester')
+        self.finish(self.verdict(), 'Plan Coordinator')
+        self.assertEqual(self.service.run['plan']['steps'][0]['status'], 'verified')
+
+    def test_context_contains_only_batch_fingerprints(self):
+        self.initialize()
+        self.implement()
+        directory = self.root / self.service.run['artifact_dir']
+        context = json.loads((directory / 'BATCH_CONTEXT.json').read_text())
+        self.assertEqual(set(context['current_fingerprints']), {'feature.py'})
+        self.assertEqual(context['changed_since_submission'], [])
+
+    def test_command_evidence_is_generated_without_agent_scripts(self):
+        self.initialize()
+        command = dict(id='check', type='command_execution', command='python -m unittest')
+        self.service.runner.event(dict(type='item.started', item=command))
+        self.service.runner.event(dict(type='item.completed', item={**command, 'exit_code':0, 'aggregated_output':'7 passed'}))
+        directory = self.root / self.service.run['artifact_dir']
+        context = json.loads((directory / 'BATCH_CONTEXT.json').read_text())
+        records = [json.loads(line) for line in (self.root / context['command_log']).read_text().splitlines()]
+        self.assertEqual(records[-1]['exit_code'], 0)
+        self.assertEqual(records[-1]['output'], '7 passed')
+        self.assertGreaterEqual(records[-1]['elapsed_seconds'], 0)
+
     def test_skip_cannot_pass_and_stale_update_cannot_replay(self):
         self.initialize()
         self.implement()

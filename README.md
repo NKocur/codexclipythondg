@@ -258,7 +258,15 @@ verdicts and forbid treating skipped checks as passing. These judgments are made
 by the agents; the workflow enforces permitted routing and the turn limit.
 
 If the run reaches its limit, approve another block of turns to resume the same
-workflow. If you stop it or restart the server, use History's **Continue from this
+workflow. After **Pause after this agent** reaches a waiting state, you can close
+Workbench and later choose **Resume paused run** in History. This restores the
+same run, original team, artifacts, pending handoff, plan state, and turn budget.
+It waits for **Continue** (or explicit additional turns) before launching an agent.
+Keep the workspace and result files in place. Resuming does not upgrade the team
+to a newer preset. Runs interrupted midway through an agent cannot use this safe
+checkpoint path.
+
+If you stop a run or interrupt it before it pauses, use History's **Continue from this
 run**, select the same preset, and ask it to resume using the saved progress ledger.
 The coordinator is instructed to reconcile prior evidence with the current code
 before skipping previously verified steps. This preset does not commit, push, or
@@ -266,6 +274,67 @@ deploy. New built-in presets are added to existing browser libraries without
 replacing saved team edits.
 
 ### Build on a previous run
+
+Verified batches use separate persistent Codex sessions for each role within a
+run. A role resumes its own session on later visits; other roles retain independent
+context. Session IDs survive a saved pause/restart. Changing a role's model starts
+a new session for that role. Codex stores its normal session files locally; a new
+Workbench run starts new role sessions. Current accepted batch state takes
+precedence over earlier conversation context.
+
+`BATCH_CONTEXT.json` provides the current batch, server-calculated hashes, drift
+and receipts. The server records command starts/completions, elapsed time, exit
+codes and bounded output in `evidence/turn-NNNN/commands.jsonl`. Agents should
+reference this evidence instead of creating capture frameworks or whole-repository
+hash inventories. Implementers focus on building and focused checks, reviewers
+on independent change/risk inspection, and testers on comprehensive acceptance.
+Repository-required checks still apply. Review may report `pending_tests` for
+execution assigned to testing; this permits routing to the tester, never final
+verification. Testing must pass all substantive criteria with a current review.
+Both receipts are service-enforced completion gates, not circular prerequisites
+to put in the batch's acceptance list.
+
+Follow-ups copy supporting evidence alongside reports, preserving relative paths
+and recording SHA-256 hashes in `source-evidence-manifest.json`. The copy is bounded
+to 100 MB / 5000 files and rejects symlinks/junctions. Reusing evidence requires
+checking its applicability to current files and environment; copied claims never
+automatically become accepted receipts. To keep existing accepted progress,
+restore a paused run instead of starting a follow-up with a fresh inventory.
+
+Crash diagnostics are recorded locally while an agent runs. Each run gets a
+`diagnostics/<run-id>/activity.jsonl` beside the saved run records (packaged app:
+`%LOCALAPPDATA%/MultiAgentWorkbench/sessions/web-runs/diagnostics/`). Command
+start/completion records include UTC time, turn, command ID and exit status;
+activity is flushed to disk immediately. History snapshots also refresh during
+activity, at most once every two seconds. A five-second sampler records system
+CPU/memory and Workbench/descendant PIDs, names, CPU time, thread counts and memory.
+CPU time is cumulative per process; compare consecutive samples to estimate load.
+Sampling stops between turns and at shutdown and launches no external commands.
+
+Logs rotate at roughly 8 MiB each, retaining four files per run. Diagnostic write
+failures are exposed in `diagnostics_error` without failing the agent. Sampling
+failures appear as `sampling_error` records. Command/output logs can contain
+project data or secrets printed by tools; inspect them before sharing. These
+measurements do not include hardware temperatures and cannot by themselves prove
+what caused a machine crash. Sudden power loss can still lose the latest record.
+
+If the provider reports that the selected model is at capacity, Workbench pauses
+the affected agent and preserves its handoff and plan state. Use **Retry agent**
+when ready, optionally entering a different model ID (blank uses the provider
+default). This changes only that role in the current run. Failed capacity attempts
+are retained separately and do not consume the completed-turn budget. Retries
+are explicit, not automatic; the agent is instructed to inspect possible partial
+file changes before repeating work. The saved pause can also be restored after
+a restart. Other failures retain their existing error handling.
+
+Exhausted reconnects, provider HTTP 500/502/503/504 responses, and recognized
+connection/stream timeouts also pause for **Retry agent**, preserving the role's
+session, incoming handoff and completed-turn budget. The CLI performs its own
+reconnect attempts first; Workbench adds no unbounded automatic retry loop.
+If the CLI recovers and emits `turn.completed`, earlier temporary error messages
+remain in the log but no longer fail the successful turn. Artifacts, handoffs,
+review and testing are still validated normally. Authentication, quota, code
+errors and user-requested stops are not converted into reconnect pauses.
 
 Open **History**, inspect a saved run, and choose **Continue from this run**. Or use
 **View** to reopen its completed Home screen, including the saved goal, team,

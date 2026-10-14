@@ -79,6 +79,8 @@ class WorkbenchServer(ThreadingHTTPServer):
         self.closing = False
 
     def server_close(self):
+        if hasattr(self, 'service'):
+            self.service.close_diagnostics()
         if hasattr(self, 'improvements'):
             self.improvements.close()
         super().server_close()
@@ -120,7 +122,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/bootstrap":
             command = resolve_codex_command()
             return self.send(200, {"token": self.server.token, "cwd": str(self.server.default_workspace), "application": "multi-agent-workbench",
-                                   "plan_workflow": "markdown-plan-v2",
+                                   "plan_workflow": "markdown-plan-v2", "resume_paused": True,
                                    "improvement_chat": True,
                                    "codex_available": bool(shutil.which(command) or Path(command).is_file())})
         if path == "/api/run":
@@ -194,10 +196,15 @@ class Handler(BaseHTTPRequestHandler):
                     if self.server.closing:
                         raise RuntimeError('Workbench is shutting down.')
                     result = self.server.service.start(data)
+            elif path == '/api/resume':
+                with self.server.service.lock:
+                    if self.server.closing:
+                        raise RuntimeError('Workbench is shutting down.')
+                    result = self.server.service.restore(data.get('id'))
             elif path == "/api/stop":
                 result = self.server.service.stop(data.get("id"))
             elif path == "/api/control":
-                result = self.server.service.control(data.get("id"), data.get("action"), data.get("auto_advance"), data.get("additional_turns"), data.get('note'))
+                result = self.server.service.control(data.get("id"), data.get("action"), data.get("auto_advance"), data.get("additional_turns"), data.get('note'), data.get('model'))
             elif path == '/api/improve':
                 auth = self.server.auth.status('Codex', refresh=True)
                 if auth['state'] != 'ready':
@@ -260,7 +267,7 @@ def main():
     finally:
         server.improvements.close()
         server.auth.close()
-        if server.service.runner and server.service.run["status"] in ACTIVE:
+        if server.service.runner and server.service.run["status"] in {'running', 'stopping'}:
             server.service.runner.stop()
         server.server_close()
 

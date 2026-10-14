@@ -34,6 +34,110 @@ def handoff(name):
 
 
 class WorkflowTests(unittest.TestCase):
+    def test_exhausted_reconnect_pauses_and_resumes_same_session(self):
+        from run_history import RunHistory
+        self.service.history = RunHistory(Path(self.temp.name) / 'history')
+        run = self.start(max_turns=1)
+        session = '33333333-3333-3333-3333-333333333333'
+        self.service.runner.event({'type':'thread.started', 'thread_id':session})
+        count = len(Runner.instances)
+        self.service.runner.event({'type':'turn.failed', 'error':{'message':'Reconnecting... 5/5 (unexpected status 503 Service Unavailable)'}})
+        self.service.runner.done(1, '')
+        self.assertEqual(len(Runner.instances), count)
+        self.assertEqual(self.service.run['pause_reason'], 'provider_transient')
+        self.assertEqual(self.service.run['turns'], [])
+        restarted = RunService(Runner, Path(self.temp.name) / 'history')
+        restarted.restore(run['id'])
+        restarted.control(run['id'], 'continue')
+        self.assertEqual(restarted.runner.state.resume_session_id, session)
+        self.assertEqual(restarted.run['current'], 0)
+        self.assertIn('partial work', restarted.runner.state.prompt)
+
+    def test_recovered_connection_does_not_fail_successful_turn(self):
+        self.start()
+        self.service.runner.event({'type':'error', 'message':'unexpected status 503 Service Unavailable'})
+        self.service.runner.event({'type':'turn.completed'})
+        self.complete()
+        self.assertEqual(self.service.run['status'], 'running')
+        self.assertEqual(self.service.run['current'], 1)
+        self.assertEqual(len(self.service.run['turns']), 1)
+
+    def test_recovery_still_requires_valid_results(self):
+        self.start()
+        self.service.runner.event({'type':'error', 'message':'stream disconnected before completion'})
+        self.service.runner.event({'type':'turn.completed'})
+        self.complete(write=False)
+        self.assertEqual(self.service.run['status'], 'failed')
+
+    def test_stopping_during_reconnect_does_not_pause_for_retry(self):
+        run = self.start()
+        self.service.run['status'] = 'stopping'
+        self.service.runner.done(1, 'HTTP 503 Service Unavailable')
+        self.assertEqual(self.service.run['status'], 'stopped')
+
+    def test_role_sessions_are_separate_and_resume_after_restart(self):
+        from run_history import RunHistory
+        self.service.history = RunHistory(Path(self.temp.name) / 'history')
+        run = self.start(auto_advance=False)
+        session = '11111111-1111-1111-1111-111111111111'
+        self.service.runner.event({'type':'thread.started', 'thread_id':session})
+        self.complete()
+        self.service.control(run['id'], 'continue')
+        self.assertEqual(self.service.runner.state.resume_session_id, '')
+        self.complete(handoff('Planner'))
+        restarted = RunService(Runner, Path(self.temp.name) / 'history')
+        restarted.restore(run['id'])
+        restarted.control(run['id'], 'continue')
+        self.assertEqual(restarted.runner.state.resume_session_id, session)
+        self.assertFalse(restarted.runner.state.ephemeral)
+
+    def test_capacity_pause_retries_same_agent_without_consuming_budget(self):
+        run = self.start(max_turns=1)
+        old_runner = self.service.runner
+        old_runner.event({'type':'thread.started', 'thread_id':'22222222-2222-2222-2222-222222222222'})
+        old_runner.event({'type':'error', 'message':'Selected model is at capacity. Please try a different model.'})
+        old_runner.done(1, '')
+        self.assertEqual(self.service.run['status'], 'paused')
+        self.assertEqual(self.service.run['pause_reason'], 'model_capacity')
+        self.assertEqual(len(self.service.run['turns']), 0)
+        self.assertEqual(len(self.service.run['failed_attempts']), 1)
+        with self.assertRaises(ValueError): self.service.control(run['id'], 'continue', model='bad model')
+        self.assertEqual(self.service.run['status'], 'paused')
+        self.service.control(run['id'], 'continue', model='alternate-model')
+        self.assertEqual(self.service.runner.state.model, 'alternate-model')
+        self.assertEqual(self.service.runner.state.resume_session_id, '')
+        self.assertEqual(self.service.run['current'], 0)
+        self.assertEqual(self.service.run['error'], '')
+        self.assertEqual(self.service.turn, 2)
+        old_runner.done(1, 'late failure')
+        self.assertEqual(self.service.run['status'], 'running')
+
+    def test_capacity_preserves_incoming_handoff_across_restart(self):
+        from run_history import RunHistory
+        self.service.history = RunHistory(Path(self.temp.name) / 'history')
+        run = self.start()
+        self.complete()
+        self.assertEqual(self.service.run['current'], 1)
+        relay = self.service.run['active_relay']
+        self.service.runner.done(1, 'Selected model is at capacity.')
+        restarted = RunService(Runner, Path(self.temp.name) / 'history')
+        restarted.restore(run['id'])
+        self.assertEqual(restarted.run['pause_reason'], 'model_capacity')
+        self.assertEqual(restarted.run['relay'], relay)
+        restarted.control(run['id'], 'continue', model='')
+        self.assertEqual(restarted.run['current'], 1)
+        self.assertIn(relay, restarted.runner.state.prompt)
+        self.assertEqual(len(restarted.run['turns']), 1)
+
+    def test_capacity_single_agent_can_stop_and_other_errors_still_fail(self):
+        run = self.service.start(dict(goal='Inspect', cwd=self.temp.name, agent=role('Solo')))['run']
+        self.service.runner.done(1, 'Selected model is at capacity.')
+        self.service.stop(run['id'])
+        self.assertEqual(self.service.run['status'], 'stopped')
+        self.start()
+        self.service.runner.done(1, 'Some other failure')
+        self.assertEqual(self.service.run['status'], 'failed')
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.service = RunService(Runner)

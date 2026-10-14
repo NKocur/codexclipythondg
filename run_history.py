@@ -5,6 +5,8 @@ import copy
 import json
 import re
 import shutil
+import os
+import hashlib
 from pathlib import Path
 
 
@@ -40,7 +42,9 @@ class RunHistory:
             raise ValueError('That saved run could not be found.') from exc
         if not isinstance(run, dict) or run.get('id') != run_id:
             raise ValueError('Saved run is invalid.')
-        if run['status'] in {'running', 'paused', 'stopping'}:
+        if run['status'] == 'paused':
+            run['status'] = 'suspended'
+        elif run['status'] in {'running', 'stopping'}:
             run['status'] = 'interrupted'
             run['error'] = 'The server stopped before this run finished. Start a follow-up to continue its work.'
             if run.get('plan'):
@@ -84,14 +88,49 @@ def prepare_source(source, directory):
         if total > 100 * 1024 * 1024:
             raise ValueError('Source results exceed the 100 MB follow-up limit.')
         files.append((name, path))
+    # Carry the evidence tree as data, preserving relative links in reports.
+    # Reject links/junctions rather than following them outside the source run.
+    if source.get('artifact_dir'):
+        workspace = Path(source['cwd']).resolve(strict=True)
+        root = (workspace / source['artifact_dir']).resolve(strict=True)
+        if not root.is_relative_to(workspace):
+            raise ValueError('Source evidence must remain inside its workspace.')
+        if directory.resolve().is_relative_to(root):
+            raise ValueError('Follow-up output cannot be nested inside the source evidence directory.')
+        seen = {name for name, _ in files}
+        for parent, directories, filenames in os.walk(root, followlinks=False):
+            directories[:] = [name for name in directories if name != '__pycache__']
+            for name in [*directories, *filenames]:
+                path = Path(parent) / name
+                if path.is_symlink() or getattr(path.lstat(), 'st_file_attributes', 0) & 1024:
+                    raise ValueError('Source evidence cannot contain symbolic links or junctions.')
+            for name in filenames:
+                path = Path(parent) / name
+                relative = path.relative_to(root).as_posix()
+                if relative in seen:
+                    continue
+                total += path.stat().st_size
+                if total > 100 * 1024 * 1024 or len(files) >= 5000:
+                    raise ValueError('Source evidence exceeds the 100 MB / 5000 file follow-up limit.')
+                files.append((relative, path))
+                seen.add(relative)
+    manifest = {}
     for name, path in files:
-        shutil.copyfile(path, inputs / name)
+        target = inputs / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(path, target)
+        manifest[name] = hashlib.sha256(target.read_bytes()).hexdigest()
+    (directory / 'source-evidence-manifest.json').write_text(json.dumps(manifest, indent=2), encoding='utf-8')
     # Context lives separately from copied filenames to avoid overwriting a result.
     context = {
         'id': source['id'], 'goal': source['goal'], 'status': source['status'],
         'error': source.get('error', ''), 'source_run_id': source.get('source_run_id'),
-        'files': [name for name, _ in files], 'turns': copy.deepcopy(source.get('turns', [])),
-        'final_response': source.get('output', ''), 'plan': copy.deepcopy(source.get('plan')),
+        'files': [a['name'] for a in source.get('artifacts', [])],
+        'evidence_manifest': 'source-evidence-manifest.json',
+        'total_turns': len(source.get('turns', [])),
+        'turns': [{**turn, 'response': turn.get('response', '')[-2000:]} for turn in source.get('turns', [])[-10:]],
+        'context_note': 'Recent responses are excerpts. Full archived reports and supporting evidence are copied under source/. Original history is unchanged.',
+        'final_response': source.get('output', '')[-6000:], 'plan': copy.deepcopy(source.get('plan')),
     }
     (directory / 'source-context.json').write_text(json.dumps(context, ensure_ascii=False, indent=2), encoding='utf-8')
-    return [name for name, _ in files]
+    return [a['name'] for a in source.get('artifacts', [])]

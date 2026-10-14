@@ -9,6 +9,17 @@ import workbench_tray as tray
 
 
 class TrayTests(unittest.TestCase):
+    def test_quit_preserves_paused_checkpoint(self):
+        host=tray.TrayHost();host.server=Mock();host.icon=Mock()
+        host.server.service.lock=threading.RLock()
+        host.server.improvements.active.return_value=False
+        host.server.service.snapshot.return_value={'run':{'id':'run','status':'paused'}}
+        with patch.object(tray.ctypes.windll.user32,'MessageBoxW') as confirm:
+            host.quit()
+        confirm.assert_not_called()
+        host.server.service.stop.assert_not_called()
+        host.server.shutdown.assert_called_once()
+
     def test_attaches_without_creating_or_stopping_existing_server(self):
         host=tray.TrayHost()
         host.icon=Mock()
@@ -61,7 +72,7 @@ class TrayTests(unittest.TestCase):
     def test_confirmed_quit_stops_owned_workflow_before_server(self):
         host=tray.TrayHost();host.server=Mock();host.icon=Mock()
         host.server.service.lock=threading.RLock()
-        state={'run':{'id':'run','status':'paused'}}
+        state={'run':{'id':'run','status':'running'}}
         host.server.service.snapshot.side_effect=lambda: state
         host.server.service.stop.side_effect=lambda run_id: state['run'].update(status='stopped')
         with patch.object(tray.ctypes.windll.user32,'MessageBoxW',return_value=6):

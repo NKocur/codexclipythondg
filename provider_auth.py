@@ -27,6 +27,8 @@ def failure_kind(text):
     text = text.lower()
     if "could not find home directory" in text:
         return "environment"
+    if any(s in text for s in ('model is at capacity', 'model at capacity', 'model is overloaded')):
+        return 'model_capacity'
     if any(s in text for s in ("usage limit", "rate limit", "rate_limit", "quota", "insufficient credits", "credit balance", "429")):
         return "usage_limit"
     if (any(s in text for s in ("not logged in", "not authenticated", "authentication required",
@@ -36,6 +38,12 @@ def failure_kind(text):
             or re.search(r"\b401\b", text)
             or re.search(r"(?:token|credential)[^\n]{0,60}(?:expired|revoked|invalid)", text)):
         return "sign_in_required"
+    if (re.search(r'(?:http(?:/\d(?:\.\d)?)?|status(?: code)?)\s*[:=]?\s*(?:500|502|503|504)\b', text)
+            or any(s in text for s in ('service unavailable', 'bad gateway', 'gateway timeout',
+                'stream disconnected before completion', 'connection reset by peer',
+                'error sending request for url', 'connection timed out', 'request timed out',
+                'reconnecting...'))):
+        return 'provider_transient'
     return "error"
 
 

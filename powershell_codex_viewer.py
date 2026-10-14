@@ -167,6 +167,7 @@ class CodexExecRunner:
             )
             with self._process_lock:
                 self.process = process
+            self.on_log(CodexEventSummary(f'Agent process started: PID {process.pid}; Workbench PID {os.getpid()}'))
             self._attach_process_lifetime_job()
 
             assert process.stderr is not None

@@ -25,7 +25,7 @@ const context = vm.createContext({
   window:{WorkbenchPreview:{open(options){previews.push(options);}}},
   fetch:async (path, options) => {
     requests.push({path,options});
-    if (path === '/api/bootstrap') return {ok:true,json:async()=>({token:'token',cwd:'C:/project',codex_available:true})};
+    if (path === '/api/bootstrap') return {ok:true,json:async()=>({token:'token',cwd:'C:/project',codex_available:true,resume_paused:true})};
     if (path === '/api/history') return {ok:true,json:async()=>({runs:[{id:'research-run',goal:'Prior literature review',cwd:'C:/research',status:'completed',started:1,count:1,team:['Researcher']}]})};
     if (path === '/api/history?id=research-run') return {ok:true,json:async()=>({run:{id:'research-run',goal:'Prior literature review',cwd:'C:/research',sandbox:'workspace-write',status:'completed',team:true,agent:{id:'researcher',name:'Researcher',provider:'Codex',status:'done'},agents:[{id:'researcher',name:'Researcher',provider:'Codex',status:'done'}],current:0,started:1,finished:61,max_turns:20,turns:[],trail:['-1>0'],events:[{time:'12:00',text:'Earlier research finished',agent:'Researcher'}],artifacts:[{name:'REPORT.html',path:'artifacts/REPORT.html',body:'Saved report'}],output:'Research summary'}})};
     if (path === '/api/auth/status') return {ok:true,json:async()=>({providers:[{provider:'Codex',state:'ready',message:'Signed in',command:'codex.cmd login'}]})};
@@ -40,10 +40,15 @@ const context = vm.createContext({
     }
     if (path === '/api/control') {
       const data=JSON.parse(options.body);
+      if ('model' in data) serverRun.agents[serverRun.next_index].model=data.model;
       if(data.action==='pause') serverRun.pause_requested=true;
       else {serverRun.pause_requested=false;serverRun.status='running';serverRun.current=serverRun.next_index;serverRun.agent=serverRun.agents[serverRun.current];serverRun.auto_advance=data.auto_advance;}
       if(data.action==='extend'){serverRun.max_turns+=data.additional_turns;serverRun.pause_reason=null;}
       rev++;
+    }
+    if (path === '/api/resume') {
+      assert.equal(options.headers['X-Workbench-Token'], 'token');
+      serverRun.status='paused';serverRun.next_index=0;serverRun.pause_reason=null;rev++;
     }
     if (path === '/api/stop') {serverRun.status='stopped';rev++;}
     return {ok:true,json:async()=>({revision:rev,run:serverRun})};
@@ -234,5 +239,30 @@ const settle=()=>new Promise(resolve=>setImmediate(resolve));
   serverRun.status='completed';serverRun.plan.outcome='blocked';rev++;await timers.shift()();
   assert.match(el('runHeadline').textContent,/Run finished · Plan blocked/);
   assert.doesNotMatch(el('runHeadline').textContent,/Plan complete/);
-  console.log('Live adapter: execution, reports, folders, auth, saved history and follow-up selection passed.');
+  const controlsBefore=requests.filter(r=>r.path==='/api/control').length;
+  await el('historyList').listeners.click({target:{closest(){return {dataset:{savedResume:serverRun.id}}}}});
+  assert.equal(context.currentView,'home');
+  assert.equal(serverRun.status,'paused');
+  assert.equal(run('waiting'),true);
+  assert.equal(requests.filter(r=>r.path==='/api/control').length,controlsBefore);
+  assert.match(context.lastNotice,/restored/);
+  serverRun={...serverRun,pause_reason:'model_capacity',team:false,agent:{...serverRun.agent,model:'busy-model'}};
+  rev++;await timers.shift()();
+  assert.equal(el('capacityModel').value,'busy-model');
+  assert.equal(el('runButton').innerHTML,'Retry agent');
+  el('capacityModel').value='alternate-model';
+  await run('primaryAction()');
+  const capacityRetry=JSON.parse(requests.filter(r=>r.path==='/api/control').at(-1).options.body);
+  assert.equal(capacityRetry.model,'alternate-model');
+  assert.equal(capacityRetry.action,'continue');
+  assert.equal(serverRun.status,'running');
+  serverRun={...serverRun,status:'paused',pause_reason:'provider_transient'};
+  rev++;await timers.shift()();
+  assert.equal(el('runButton').innerHTML,'Retry agent');
+  assert.equal(el('runHeadline').textContent,'Provider connection interrupted');
+  await run('primaryAction()');
+  const connectionRetry=JSON.parse(requests.filter(r=>r.path==='/api/control').at(-1).options.body);
+  assert.equal(connectionRetry.action,'continue');
+  assert.equal('model' in connectionRetry,false);
+  console.log('Live adapter: execution, reports, folders, auth, saved history, resume and follow-up selection passed.');
 })().catch(error=>{console.error(error);process.exitCode=1;});

@@ -37,6 +37,22 @@ class WebTests(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertEqual(config['plan_workflow'], 'markdown-plan-v2')
         self.assertTrue(config['improvement_chat'])
+        self.assertTrue(config['resume_paused'])
+
+    def test_resume_endpoint_requires_token_and_restores_without_launch(self):
+        from run_history import RunHistory
+        self.service.history = RunHistory(Path(self.temp.name) / 'resume-history')
+        run = self.service.start(self.data)['run']
+        run.update(status='paused', next_index=0, relay='Continue saved work')
+        self.service.history.save(run)
+        self.service.run = None
+        self.service.runner = None
+        self.assertEqual(self.request('/api/resume', {'id':run['id']}, token=False)[0], 403)
+        code, result = self.request('/api/resume', {'id':run['id']})
+        self.assertEqual(code, 200)
+        self.assertEqual(result['run']['status'], 'paused')
+        self.assertIsNone(self.service.runner)
+        self.assertEqual(self.request('/api/resume', {'id':run['id']})[0], 409)
 
     def test_improvement_chat_auth_and_independent_execution(self):
         self.assertEqual(self.request('/api/improve', token=False)[0], 403)
@@ -153,7 +169,7 @@ class WebTests(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertEqual(snapshot["run"]["status"], "running")
         self.assertFalse(self.service.runner.state.bypass_approvals_and_sandbox)
-        self.assertTrue(self.service.runner.state.ephemeral)
+        self.assertFalse(self.service.runner.state.ephemeral)
         self.assertEqual(self.service.runner.state.model_reasoning_effort, "high")
         self.data["agent"]["name"] = "Changed"
         self.assertEqual(self.request("/api/run")[1]["run"]["agent"]["name"], "Inspector")

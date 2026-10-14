@@ -36,6 +36,12 @@ class AuthTests(unittest.TestCase):
         for text in ('DNS resolution failed', 'Permission denied', '403 Forbidden'):
             self.assertEqual(failure_kind(text),'error')
         self.assertEqual(failure_kind('Usage limit exceeded'),'usage_limit')
+        for message in ('Reconnecting... 5/5 (unexpected status 503 Service Unavailable)',
+                        'HTTP 502', 'stream disconnected before completion', 'request timed out'):
+            self.assertEqual(failure_kind(message), 'provider_transient')
+        self.assertEqual(failure_kind('Reconnecting... 401 Unauthorized'), 'sign_in_required')
+        self.assertEqual(failure_kind('Reconnecting... 429 rate limit'), 'usage_limit')
+        self.assertEqual(failure_kind('Test assertion: 503 != 200'), 'error')
 
     def test_login_is_explicit_single_and_output_is_not_exposed(self):
         service=AuthService()

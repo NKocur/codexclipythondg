@@ -17,6 +17,7 @@ from powershell_codex_viewer import CodexExecRunner, CodexRunState
 from provider_auth import failure_kind
 from run_history import RunHistory, artifact_path, prepare_source
 import plan_workflow
+from run_diagnostics import RunDiagnostics
 
 ACTIVE = {"running", "stopping", "paused"}
 
@@ -124,6 +125,43 @@ class RunService:
         self.final_message = ""
         self.artifact_directory = None
         self.history = RunHistory(history_dir) if history_dir is not None else None
+        self.diagnostics = None
+        self.last_activity_save = 0
+        self.command_started = {}
+
+    def _record_command(self, kind, item):
+        if 'plan' not in self.run:
+            return
+        key = item.get('id', '')
+        if kind == 'item.started':
+            self.command_started[key] = time.monotonic()
+        record = dict(time=time.time(), turn=self.turn, event=kind, id=key,
+                      command=str(item.get('command', ''))[:64000], exit_code=item.get('exit_code'),
+                      status=item.get('status'), output=str(item.get('aggregated_output', ''))[-8000:])
+        if kind == 'item.completed' and key in self.command_started:
+            record['elapsed_seconds'] = round(time.monotonic() - self.command_started.pop(key), 3)
+        name = f"{self.run['artifact_dir']}/evidence/turn-{self.turn:04d}/commands.jsonl"
+        try:
+            path = plan_workflow.local_path(Path(self.run['cwd']), name)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if path.exists() and path.stat().st_size > 2 * 1024 * 1024:
+                return
+            with path.open('a', encoding='utf-8') as stream:
+                stream.write(json.dumps(record, ensure_ascii=True) + '\n')
+        except (OSError, ValueError) as exc:
+            self.run['command_evidence_error'] = str(exc)
+
+    def close_diagnostics(self):
+        if self.diagnostics:
+            self.diagnostics.stop()
+
+    def _diagnostic(self, kind, **data):
+        if self.diagnostics:
+            try:
+                self.diagnostics.write(kind, run_id=self.run['id'], turn=self.turn, **data)
+                self.run.pop('diagnostics_error', None)
+            except OSError as exc:
+                self.run['diagnostics_error'] = str(exc)
 
     def _save_history(self):
         if self.history:
@@ -155,6 +193,49 @@ class RunService:
     def snapshot(self):
         with self.lock:
             return {"revision": self.revision, "run": copy.deepcopy(self.run)}
+
+    def restore(self, run_id):
+        """Attach a durable boundary checkpoint; Continue explicitly starts work."""
+        with self.lock:
+            if self.run and self.run['status'] in ACTIVE:
+                raise RuntimeError('A workflow is already active. Finish or stop it first.')
+            run = self.saved_run(run_id)
+            if run['status'] != 'suspended':
+                raise ValueError('Only saved paused runs can be resumed.')
+            request = {**run, 'max_turns': 1}
+            if not run['team']:
+                request.pop('agents')
+            _, _, _, workspace, _, _ = validate_request(request)
+            index, limit = run.get('next_index'), run.get('max_turns')
+            if (type(index) is not int or not 0 <= index < len(run['agents']) or
+                    not isinstance(run.get('relay'), str) or type(limit) is not int or limit < 1):
+                raise ValueError('Saved run has no valid pending handoff or turn budget.')
+            directory = None
+            if run.get('artifact_dir'):
+                directory = (workspace / run['artifact_dir']).resolve(strict=True)
+                if not directory.is_dir() or not directory.is_relative_to(workspace):
+                    raise ValueError('Saved artifact directory must remain inside the workspace.')
+                for artifact in run.get('artifacts', []):
+                    artifact_path(run, artifact['name'])
+            elif run['team']:
+                raise ValueError('Saved team artifact directory is missing.')
+            # Older checkpoints lacked a counter. Include archived structured turns
+            # because the service counter can span multiple runs.
+            sequence = max(len(run['turns']), run.get('turn_sequence', 0))
+            if directory:
+                for path in (directory / 'evidence').glob('turn-*'):
+                    if path.name[5:].isdigit():
+                        sequence = max(sequence, int(path.name[5:]))
+            self.turn = max(self.turn, sequence)
+            self.artifact_directory = directory
+            self.runner = None
+            run.update(status='paused', pause_requested=False, finished=None)
+            if len(run['turns']) >= limit:
+                run['pause_reason'] = 'turn_limit'
+            self.run = run
+            self.log(run_id, 'Saved pause restored. Continue when ready; the original team and turn budget are preserved.')
+            self._save_history()
+            return self.snapshot()
 
     def start(self, data):
         roles, team, goal, workspace, sandbox, limit = validate_request(data)
@@ -282,7 +363,7 @@ class RunService:
             return None
         if override:
             target = next(i for i, a in enumerate(run['agents']) if a['id'] == override)
-            body = f"Structured batch status routes to {run['agents'][target]['name']}. Read PLAN_STATE.json and current evidence.\n{body}"
+            body = f"Structured batch status routes to {run['agents'][target]['name']}. Read BATCH_CONTEXT.json and the relevant current evidence.\n{body}"
         return target, body
 
     def _plan_pause(self, reason, message):
@@ -307,6 +388,10 @@ class RunService:
 
     def _launch(self, index, relay):
         run = self.run
+        self.close_diagnostics()
+        if self.history:
+            self.diagnostics = RunDiagnostics(self.history.directory / 'diagnostics' / run['id'])
+            run['diagnostics_dir'] = str(self.diagnostics.directory)
         if len(run["turns"]) >= run["max_turns"]:
             run.update(status='paused', pause_reason='turn_limit', next_index=index, relay=relay, pause_requested=False)
             self.log(run['id'], f"Reached the limit of {run['max_turns']} agent turns. Waiting for your decision to allow more turns or stop.")
@@ -314,16 +399,31 @@ class RunService:
             return
         self.turn += 1
         turn = self.turn
+        run['turn_sequence'] = turn
         role = run["agents"][index]
-        run.update(status="running", current=index, agent=role, next_index=None, pause_reason=None)
+        run.update(status="running", current=index, agent=role, next_index=None, pause_reason=None,
+                   active_relay=relay, error='', failure_kind=None)
         role["status"] = "running"
         self.turn_output = self.turn_error = ""
         self.final_message = ""
+        self.command_started = {}
         effort = role["effort"]
+        session = run.get('role_sessions', {}).get(role['id'], {})
+        resume_id = session.get('id', '') if session.get('model') == role['model'] else ''
+        if 'plan' in run:
+            batch = next((b for b in run['plan']['batches'] if b['id'] == run['plan']['current']), None)
+            context = dict(turn=turn, role=role['id'], batch=batch,
+                           source=run['plan']['source'], scope='Current batch only. The server maintains these fingerprints and receipts.')
+            context['command_log'] = f"{run['artifact_dir']}/evidence/turn-{turn:04d}/commands.jsonl"
+            if batch:
+                context['current_fingerprints'] = plan_workflow.fingerprints(Path(run['cwd']), batch['files'])
+                context['changed_since_submission'] = [name for name, value in context['current_fingerprints'].items()
+                    if value != (batch.get('fingerprints') or {}).get(name)]
+            (self.artifact_directory / 'BATCH_CONTEXT.json').write_text(json.dumps(context, indent=2), encoding='utf-8')
         state = CodexRunState(prompt=self._prompt(index, relay), cwd=run["cwd"], model=role["model"],
                               model_reasoning_effort="" if effort == "Default" else effort.lower(),
                               sandbox=run["sandbox"], bypass_approvals_and_sandbox=False,
-                              skip_git_check=True, ephemeral=True)
+                              skip_git_check=True, ephemeral=False, resume_session_id=resume_id)
         run_id = run["id"]
         self.log(run_id, f"Starting {role['name']} (turn {len(run['turns']) + 1}/{run['max_turns']})")
         self._save_history()
@@ -333,6 +433,8 @@ class RunService:
                 on_log=lambda log: self.log(run_id, log.text, log.level, turn),
                 on_done=lambda code, stderr: self.done(run_id, code, stderr, turn))
             self.runner.start()
+            if run['status'] == 'running':
+                self.diagnostics and self.diagnostics.start(turn)
         except Exception as exc:
             self.done(run_id, 1, str(exc), turn)
 
@@ -347,6 +449,10 @@ class RunService:
             self.run["events"].append({"time": time.strftime("%H:%M:%S"), "text": str(text)[-12000:],
                                        "level": level, "agent": self.run["agent"]["name"]})
             self.run["events"] = self.run["events"][-500:]
+            self._diagnostic('activity', agent=self.run['agent']['name'], level=level, text=str(text)[-12000:])
+            if time.monotonic() - self.last_activity_save >= 2:
+                self._save_history()
+                self.last_activity_save = time.monotonic()
             self.revision += 1
 
     def event(self, run_id, event, turn=None):
@@ -354,6 +460,11 @@ class RunService:
             if not self._current(run_id, turn) or self.run["status"] == "paused":
                 return
             kind, item = event.get("type", "event"), event.get("item") or {}
+            if (kind == 'thread.started' and isinstance(event.get('thread_id'), str)
+                    and re.fullmatch(r'[0-9a-fA-F-]{36}', event['thread_id'])):
+                self.run.setdefault('role_sessions', {})[self.run['agent']['id']] = {
+                    'id': event['thread_id'], 'model': self.run['agent']['model']}
+                self._save_history()
             if item.get("type") == "agent_message" and kind == "item.completed":
                 text = str(item.get("text", ""))
                 self.final_message = text
@@ -361,11 +472,22 @@ class RunService:
                 self.run["output"] = self.turn_output
                 self.log(run_id, text)
             elif item.get("type") == "command_execution":
+                self._record_command(kind, item)
+                self._diagnostic('command', event=kind, item_id=item.get('id'),
+                                 command=str(item.get('command', ''))[:64000],
+                                 exit_code=item.get('exit_code'), status=item.get('status'))
                 self.log(run_id, f"{kind}: {item.get('command', '')}\n{item.get('aggregated_output', '')}")
             elif kind in {"error", "turn.failed"}:
                 error = event.get("error") or event.get("message") or event
                 self.turn_error = error if isinstance(error, str) else json.dumps(error)
                 self.log(run_id, self.turn_error, "error")
+            elif kind == 'turn.completed':
+                # The CLI may emit retry errors before successfully recovering.
+                # Retain those logs, but do not fail a completed turn for them.
+                if failure_kind(self.turn_error) in {'provider_transient', 'model_capacity'}:
+                    self.turn_error = ''
+                    self.log(run_id, 'Provider recovered and completed the turn. Validating its results.')
+                self.log(run_id, json.dumps(event, ensure_ascii=False))
             else:
                 self.log(run_id, json.dumps(event, ensure_ascii=False))
 
@@ -432,6 +554,8 @@ class RunService:
         with self.lock:
             if not self._current(run_id, turn) or self.run["status"] == "paused":
                 return
+            self.close_diagnostics()
+            self._diagnostic('agent_finished', exit_code=code)
             run, role = self.run, self.run["agent"]
             run["turns"].append({"agent_id": role["id"], "agent": role["name"],
                                  "response": self.turn_output, "exit_code": code})
@@ -442,6 +566,20 @@ class RunService:
             if code or self.turn_error:
                 error = self.turn_error or stderr[-12000:] or f"Codex exited with code {code}."
                 run["failure_kind"] = failure_kind(error + "\n" + stderr)
+                if run['failure_kind'] in {'model_capacity', 'provider_transient'}:
+                    attempt = run['turns'].pop()
+                    attempt.update(turn_sequence=self.turn, model=role['model'], error=error)
+                    run.setdefault('failed_attempts', []).append(attempt)
+                    role['status'] = 'queued'
+                    run.update(status='paused', pause_reason=run['failure_kind'], error=error,
+                               next_index=run['current'], relay=run.get('active_relay', ''),
+                               pause_requested=False)
+                    message = ('Model capacity reached. Progress is saved. Retry this agent later or choose another model.'
+                               if run['failure_kind'] == 'model_capacity' else
+                               'Provider connection failed after retries. Progress is saved. Retry this agent when the connection or service recovers.')
+                    self.log(run_id, message)
+                    self._save_history()
+                    return
                 if run["failure_kind"] == "sign_in_required":
                     run["auth_provider"] = "Codex"
                 self._finish("failed", error); return
@@ -499,10 +637,16 @@ class RunService:
         self.log(self.run["id"], error or f"Run {status}.", "error" if error else "info")
         self._save_history()
 
-    def control(self, run_id, action, auto_advance=None, additional_turns=None, note=None):
+    def control(self, run_id, action, auto_advance=None, additional_turns=None, note=None, model=None):
         with self.lock:
             if not self.run or self.run["id"] != run_id or self.run["status"] not in ACTIVE:
                 raise ValueError("That workflow is no longer active.")
+            if model is not None:
+                if (self.run.get('pause_reason') != 'model_capacity' or action != 'continue' or
+                        self.run['status'] != 'paused'):
+                    raise ValueError('Model changes are available when retrying a capacity pause.')
+                if not isinstance(model, str) or len(model) > 120 or (model and not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:/-]*', model)):
+                    raise ValueError('Enter a valid model ID, or leave blank for the provider default.')
             if action == "pause":
                 if self.run["status"] != "running": raise ValueError("The workflow is not running.")
                 self.run["pause_requested"] = True
@@ -527,6 +671,10 @@ class RunService:
                     self.log(run_id, f'You allowed {additional_turns} more turns. New limit: {self.run["max_turns"]}.')
                 if note is not None:
                     self.run['relay'] += '\nUser resume instructions:\n' + note
+                if self.run.get('pause_reason') in {'model_capacity', 'provider_transient'}:
+                    if model is not None:
+                        self.run['agents'][self.run['next_index']]['model'] = model
+                    self.run['relay'] += '\nThis is a retry after a temporary provider failure. Inspect current files for partial work before repeating any actions.'
                 if 'plan' in self.run:
                     self.run['plan'].pop('notice', None)
                 self.run["pause_requested"] = False
